@@ -1,0 +1,126 @@
+/* Shared renderers. Each page calls the function it needs. Data comes from window.SITE (data/*.js). */
+(function () {
+  const S = window.SITE || {};
+  const P = S.profile || {};
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  /* ---- nav + footer + profile fields ---- */
+  function renderChrome() {
+    const page = document.body.dataset.page;
+    document.querySelectorAll(".nav-links a").forEach(a => { if (a.dataset.page === page) a.classList.add("active"); });
+    document.querySelectorAll("[data-profile]").forEach(n => {
+      const key = n.dataset.profile; const v = P[key];
+      if (v == null || v === "") { if (n.dataset.hideEmpty !== undefined) n.style.display = "none"; return; }
+      if (n.tagName === "IMG") n.src = v; else n.textContent = v;
+    });
+    document.querySelectorAll("[data-profile-aff]").forEach(n => { n.textContent = [P.affiliation, P.labs].filter(Boolean).join(" · "); });
+    document.querySelectorAll("[data-profile-hero]").forEach(n => { if (P.hero) n.innerHTML = esc(P.hero).replace(/—/g, "<br class=\"hero-br\">—"); });
+    const pillDot = $(".pill .dot"); if (pillDot && !P.nowAvailable) pillDot.classList.add("off");
+    document.querySelectorAll("[data-book]").forEach(b => {
+      if (P.bookingUrl) { b.href = P.bookingUrl; b.target = "_blank"; b.rel = "noopener"; }
+      else { b.setAttribute("aria-disabled", "true"); b.title = "Booking link not set yet"; }
+    });
+    document.querySelectorAll("[data-mail]").forEach(b => { if (P.email) b.href = "mailto:" + P.email; else b.style.display = "none"; });
+    const y = $("[data-year]"); if (y) y.textContent = new Date().getFullYear();
+  }
+
+  /* ---- home bento numbers ---- */
+  function renderHome() {
+    const meas = S.measurements || [], pubs = (S.publications || []).filter(p => !p.placeholder), mats = S.materials || [];
+    const av = P.availability || {}; const openDays = Object.keys(av).filter(d => av[d] === "open");
+    $("#n-meas").textContent = meas.length;
+    $("#n-pubs").textContent = pubs.length || "—";
+    $("#n-pubs-sub").textContent = pubs.length ? "peer-reviewed papers · from Google Scholar" : "list not loaded yet";
+    $("#n-sched").textContent = openDays.length ? openDays.join(" · ") : "—";
+    $("#n-mats").textContent = mats.length;
+    $("#focus-line").textContent = S.focusLine || "";
+    $("#meas-sub").textContent = meas.filter(m => m.featured).map(m => m.name).join(" · ");
+    // mini bond motif for materials tile
+    const now = mats.find(m => m.now) || mats[0];
+    if (now) $("#mats-sub").textContent = "now: " + now.label;
+  }
+
+  /* ---- measurements ---- */
+  function renderMeasurements() {
+    const list = $("#meas-list"); const items = S.measurements || [];
+    items.forEach((m, i) => {
+      const r = el("div", "row" + (m.featured ? " featured" : ""));
+      r.append(el("div", "idx", String(i + 1).padStart(2, "0")));
+      const mid = el("div");
+      mid.append(el("div", "name", esc(m.name) + (m.service ? ' <span class="badge">Available on request</span>' : "")),
+                 el("div", "detail", esc(m.detail) + (m.sample ? ` <span class="subtle">· ${esc(m.sample)}</span>` : "")));
+      r.append(mid, el("div", "cond", esc(m.cond)));
+      list.append(r);
+    });
+    $("#meas-count").textContent = items.length;
+  }
+
+  /* ---- publications ---- */
+  function renderPublications() {
+    const list = $("#pub-list");
+    const pubs = (S.publications || []).slice().sort((a, b) => (b.featured - a.featured) || (b.year - a.year));
+    const meta = S.publicationsMeta || {};
+    const real = pubs.filter(p => !p.placeholder);
+    $("#pub-count").textContent = real.length || "—";
+    $("#pub-src").textContent = meta.source === "scholar" ? `From Google Scholar · abstracts via Crossref/OpenAlex · updated ${meta.updated}`
+      : meta.source === "orcid" ? `Synced from ORCID · ${meta.updated}` : "Placeholder list";
+    let year = null;
+    pubs.forEach(p => {
+      if (!p.featured && p.year !== year) { year = p.year; list.append(el("div", "year-head", String(year))); }
+      const card = el("article", "pub-card" + (p.featured ? " featured" : "") + (p.placeholder ? " placeholder" : ""));
+      if (p.image) { const fig = el("figure", "pub-fig"); fig.innerHTML = `<img src="${esc(p.image)}" alt="" loading="lazy">${p.imageCaption || p.imageCredit ? `<figcaption>${esc(p.imageCaption)}${p.imageCredit ? ` · ${esc(p.imageCredit)}` : ""}</figcaption>` : ""}`; card.append(fig); }
+      const body = el("div", "pub-body");
+      const ref = [p.journal, p.volume ? `<b>${esc(p.volume)}</b>` : "", p.volume && p.page ? esc(p.page) : "", p.year ? `(${p.year})` : ""].filter(Boolean).join(" ");
+      body.append(el("h3", "pub-title", esc(p.title)));
+      if (p.authors) body.append(el("div", "pub-authors", esc(p.authors).replace(/(YeongUk Choi|Yeong Uk Choi|Yeong-Uk Choi|Y\. U\. Choi|YU Choi)/g, "<u>$1</u>")));
+      body.append(el("div", "pub-ref", ref));
+      const foot = el("div", "pub-foot");
+      if (p.abstract) {
+        const d = document.createElement("details"); d.className = "pub-abs";
+        d.innerHTML = `<summary>Abstract</summary><p>${esc(p.abstract)}</p>`; foot.append(d);
+      } else foot.append(el("span", "subtle", "Abstract not available from publisher"));
+      if (p.doi) foot.append(Object.assign(el("a", "btn small", "DOI ↗"), { href: "https://doi.org/" + p.doi, target: "_blank", rel: "noopener" }));
+      body.append(foot); card.append(body); list.append(card);
+    });
+    const links = $("#pub-links");
+    if (P.scholarUrl) links.append(Object.assign(el("a", "btn", "Google Scholar ↗"), { href: P.scholarUrl, target: "_blank", rel: "noopener" }));
+    if (P.orcid) links.append(Object.assign(el("a", "btn", "ORCID ↗"), { href: "https://orcid.org/" + P.orcid, target: "_blank", rel: "noopener" }));
+  }
+
+  /* ---- schedule ---- */
+  function renderSchedule() {
+    const week = $("#week"); const av = P.availability || {}; const label = { open: "Open", busy: "Busy", lab: "In lab" };
+    ["Mon", "Tue", "Wed", "Thu", "Fri"].forEach(d => {
+      const st = av[d] || "busy"; const c = el("div", "day " + st); c.append(el("div", "d", d), el("div", "s", label[st] || st)); week.append(c);
+    });
+    const box = $("#cal-embed");
+    if (P.calendarEmbedUrl) { const f = document.createElement("iframe"); f.src = P.calendarEmbedUrl; f.loading = "lazy"; box.innerHTML = ""; box.append(f); }
+  }
+
+  /* ---- focus: tiny markdown ---- */
+  function md(src) {
+    const lines = src.trim().split(/\r?\n/); let out = "", inList = false, para = [];
+    const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>");
+    const flush = () => { if (para.length) { out += `<p>${inline(para.join(" "))}</p>`; para = []; } };
+    const closeList = () => { if (inList) { out += "</ul>"; inList = false; } };
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (!l) { flush(); closeList(); continue; }
+      let m;
+      if ((m = l.match(/^(#{1,3})\s+(.*)/))) { flush(); closeList(); out += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; }
+      else if ((m = l.match(/^[-*]\s+(.*)/))) { flush(); if (!inList) { out += "<ul>"; inList = true; } out += `<li>${inline(m[1])}</li>`; }
+      else para.push(l);
+    }
+    flush(); closeList(); return out;
+  }
+  function renderFocus() { $("#focus-body").innerHTML = md(S.focusMarkdown || ""); }
+
+  window.Site = { renderChrome, renderHome, renderMeasurements, renderPublications, renderSchedule, renderFocus };
+  document.addEventListener("DOMContentLoaded", () => {
+    renderChrome();
+    const page = document.body.dataset.page;
+    ({ home: renderHome, measurements: renderMeasurements, publications: renderPublications, schedule: renderSchedule, focus: renderFocus }[page] || (() => {}))();
+  });
+})();
