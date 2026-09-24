@@ -17,7 +17,7 @@
     });
     document.querySelectorAll("[data-profile-aff]").forEach(n => { n.textContent = [P.affiliation, P.labs].filter(Boolean).join(" · "); });
     document.querySelectorAll("[data-profile-points]").forEach(ul => {
-      (P.heroPoints || []).forEach(pt => { const li = document.createElement("li"); li.innerHTML = `<b>${esc(pt.k)}</b><span>${esc(pt.v)}</span>`; ul.append(li); });
+      (P.heroPoints || []).forEach(pt => { const li = document.createElement("li"); const lines = Array.isArray(pt.v) ? pt.v : [pt.v]; li.innerHTML = `<b>${esc(pt.k)}</b><span>${lines.map(esc).join("<br>")}</span>`; ul.append(li); });
     });
     document.querySelectorAll("[data-profile-hero]").forEach(n => { if (P.hero) n.innerHTML = esc(P.hero).replace(/—/g, "<br class=\"hero-br\">—"); });
     const pillDot = $(".pill .dot"); if (pillDot && !P.nowAvailable) pillDot.classList.add("off");

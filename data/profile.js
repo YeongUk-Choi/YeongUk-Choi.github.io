@@ -7,12 +7,12 @@ window.SITE.profile = {
   title: "M.S. & Ph.D. Candidate",
   affiliation: "Department of Physics, Inha University",
   labs: "QFML & NMPL",                         // 연구실 (소속 뒤에 붙여 표시)
-  hero: "I synthesize new materials — and measure what emerges.",
-  heroPoints: [                                // 첫 화면 개조식 요약 (UK 지시 2026-09-24: 줄글 대신 항목). 라벨 · 내용
-    { k: "Grow",    v: "Oxide, chalcogenide & intermetallic thin films · PLD" },
-    { k: "Measure", v: "R(T) · R(H) · Hall · VSM · heat capacity · PPMS 1.8–400 K, ±9 T" },
-    { k: "Probe",   v: "Synchrotron XRD · XPS · XAS" },
-    { k: "Model",   v: "COMSOL Multiphysics · Rietveld refinement" }
+  hero: "Grow new materials — measure what emerges.",
+  heroPoints: [                                // 첫 화면 개조식 요약 (UK 지시 2026-09-24). k = 라벨, v = 문자열 또는 줄 배열
+    { k: "Grow",        v: ["Single crystal · FeSe, NbSe₂, FeSb", "Thin film · VO₂, LSMO, YBCO"] },
+    { k: "PPMS",        v: ["1.8–400 K · ±9 T", "R(T) · R(H) · Hall effect · VSM · heat capacity · angle-dependent"] },
+    { k: "Synchrotron", v: "XRD · XPS · XAS" },
+    { k: "Software",    v: "COMSOL Multiphysics · VESTA · FullProf (Rietveld refinement)" }
   ],
   now: "Now · in the lab",                     // 첫 화면 상태 배지
   nowAvailable: true,                          // true = 초록 점
