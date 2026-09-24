@@ -19,7 +19,9 @@ window.SITE.profile = {
   email: "aowlr8945@gmail.com",
   photo: "assets/img/portrait-cutout.png",    // 첫 사진(배경 제거판). 흰 배경 원본 정방형: portrait.jpg, 원본 비율: portrait-full.jpg
   photos: [                                    // 첫 화면에서 번갈아 보일 사진들 (UK 지시 2026-09-24). 한 장이면 고정. 정방형 권장
-    "assets/img/portrait-cutout.png"
+    "assets/img/portrait-cutout.png",
+    "assets/img/photo-otter.jpg",             // UK 제공 2026-09-24 (스크린샷 → 정방형 중앙 크롭 1000px)
+    "assets/img/photo-street.jpg"
   ],
   photoInterval: 5000,                         // 사진 교대 간격 (ms)
   bookingUrl: "",                              // Google 예약 페이지 / Calendly 링크 (비면 비활성 버튼) — E-18 대기
