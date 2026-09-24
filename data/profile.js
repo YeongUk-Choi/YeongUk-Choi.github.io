@@ -8,7 +8,12 @@ window.SITE.profile = {
   affiliation: "Department of Physics, Inha University",
   labs: "QFML & NMPL",                         // 연구실 (소속 뒤에 붙여 표시)
   hero: "I synthesize new materials — and measure what emerges.",
-  heroSub: "Thin-film growth by PLD · Electrical, magnetic and thermal characterization with PPMS",
+  heroPoints: [                                // 첫 화면 개조식 요약 (UK 지시 2026-09-24: 줄글 대신 항목). 라벨 · 내용
+    { k: "Grow",    v: "Oxide, chalcogenide & intermetallic thin films · PLD" },
+    { k: "Measure", v: "R(T) · R(H) · Hall · VSM · heat capacity · PPMS 1.8–400 K, ±9 T" },
+    { k: "Probe",   v: "Synchrotron XRD · XPS · XAS" },
+    { k: "Model",   v: "COMSOL Multiphysics · Rietveld refinement" }
+  ],
   now: "Now · in the lab",                     // 첫 화면 상태 배지
   nowAvailable: true,                          // true = 초록 점
   email: "aowlr8945@gmail.com",
