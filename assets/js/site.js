@@ -60,7 +60,8 @@
   /* ---- publications ---- */
   function renderPublications() {
     const list = $("#pub-list");
-    const pubs = (S.publications || []).slice().sort((a, b) => (b.featured - a.featured) || (b.year - a.year));
+    const rank = p => p.featured ? (typeof p.featured === "number" ? p.featured : 1) : Infinity; // featured: 1,2,3 = pinned order
+    const pubs = (S.publications || []).slice().sort((a, b) => (rank(a) - rank(b)) || (b.year - a.year));
     const meta = S.publicationsMeta || {};
     const real = pubs.filter(p => !p.placeholder);
     $("#pub-count").textContent = real.length || "—";
@@ -73,6 +74,7 @@
       if (p.image) { const fig = el("figure", "pub-fig"); fig.innerHTML = `<img src="${esc(p.image)}" alt="" loading="lazy">${p.imageCaption || p.imageCredit ? `<figcaption>${esc(p.imageCaption)}${p.imageCredit ? ` · ${esc(p.imageCredit)}` : ""}</figcaption>` : ""}`; card.append(fig); }
       const body = el("div", "pub-body");
       const ref = [p.journal, p.volume ? `<b>${esc(p.volume)}</b>` : "", p.volume && p.page ? esc(p.page) : "", p.year ? `(${p.year})` : ""].filter(Boolean).join(" ");
+      if (p.featured) body.append(el("div", "pub-pin", "Selected"));
       body.append(el("h3", "pub-title", esc(p.title)));
       if (p.authors) body.append(el("div", "pub-authors", esc(p.authors).replace(/(YeongUk Choi|Yeong Uk Choi|Yeong-Uk Choi|Y\. U\. Choi|YU Choi)/g, "<u>$1</u>")));
       body.append(el("div", "pub-ref", ref));

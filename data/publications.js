@@ -1,5 +1,5 @@
 // 논문 목록 — 검증된 DOI 목록(scripts/fetch_publications.py) 기준. 서지는 Crossref, 빈 초록은 OpenAlex로 보강.
-// 손으로 고치는 칸: image(assets/img/pubs/…), imageCaption, imageCredit(라이선스·출처), featured(상단 고정), abstract(닫힌 논문).
+// 손으로 고치는 칸: image(assets/img/pubs/…), imageCaption, imageCredit(라이선스·출처), featured(상단 고정: 1,2,3 순위 숫자 또는 false), abstract(닫힌 논문).
 // 이 칸들은 스크립트를 다시 돌려도 DOI 기준으로 보존됩니다. Google Scholar는 프로필 링크로만 씁니다.
 window.SITE = window.SITE || {};
 window.SITE.publicationsMeta = {"source": "scholar", "updated": "2026-09-22", "count": 11, "scholarUser": "GAX2tHgAAAAJ"};
@@ -35,7 +35,7 @@ window.SITE.publications = [
     "image": "",
     "imageCaption": "",
     "imageCredit": "",
-    "featured": false,
+    "featured": 3,
     "note": ""
   },
   {
@@ -52,7 +52,7 @@ window.SITE.publications = [
     "image": "",
     "imageCaption": "",
     "imageCredit": "",
-    "featured": false,
+    "featured": 1,
     "note": ""
   },
   {
@@ -120,7 +120,7 @@ window.SITE.publications = [
     "image": "",
     "imageCaption": "",
     "imageCredit": "",
-    "featured": false,
+    "featured": 2,
     "note": ""
   },
   {

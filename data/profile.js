@@ -12,7 +12,7 @@ window.SITE.profile = {
   now: "Now · in the lab",                     // 첫 화면 상태 배지
   nowAvailable: true,                          // true = 초록 점
   email: "aowlr8945@gmail.com",
-  photo: "assets/img/portrait.jpg",            // 정방형 크롭. 원본 비율은 assets/img/portrait-full.jpg
+  photo: "assets/img/portrait-cutout.png",    // 배경 제거판(투명 PNG). 흰 배경 원본 정방형: portrait.jpg, 원본 비율: portrait-full.jpg
   bookingUrl: "",                              // Google 예약 페이지 / Calendly 링크 (비면 비활성 버튼) — E-18 대기
   calendarEmbedUrl: "",                        // Google Calendar 공개(바쁨/가능) 임베드 URL — E-19 대기
   orcid: "",                                   // 없음. 논문은 Google Scholar 기준 (scripts/fetch_scholar.py)
