@@ -1,14 +1,17 @@
-# Deploys the static site to GitHub Pages and refreshes publication metadata (Crossref/OpenAlex, by DOI) once a week.
-# Inert until this repository is pushed to GitHub with Pages enabled (deployment step 2, option ①).
-name: pages
+# Refreshes publication metadata (Crossref/OpenAlex, by DOI) once a week and commits it to main.
+# Deployment itself is handled by GitHub Pages "Deploy from a branch" (main, /) — every push to main republishes the site.
+name: refresh-publications
 on:
-  push: { branches: [main] }
-  schedule: [{ cron: "0 18 * * 0" }]   # Sunday 03:00 KST
+  schedule:
+    - cron: "0 18 * * 0"   # Sunday 03:00 KST
   workflow_dispatch:
-permissions: { contents: write, pages: write, id-token: write }
-concurrency: { group: pages, cancel-in-progress: true }
+permissions:
+  contents: write
+concurrency:
+  group: refresh-publications
+  cancel-in-progress: true
 jobs:
-  build:
+  refresh:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,14 +19,7 @@ jobs:
         run: python3 scripts/fetch_publications.py
       - name: Commit refreshed list
         run: |
-          git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/publications.js && (git diff --cached --quiet || git commit -m "chore: refresh publication metadata") && git push
-      - uses: actions/upload-pages-artifact@v3
-        with: { path: . }
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: { name: github-pages, url: ${{ steps.d.outputs.page_url }} }
-    steps:
-      - id: d
-        uses: actions/deploy-pages@v4
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/publications.js
+          if git diff --cached --quiet; then echo "no change"; else git commit -m "chore: refresh publication metadata" && git push; fi

@@ -6,7 +6,7 @@ import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 const [page, out, w = "1440", h = "900", scale = "2", mobile = "0", pre = ""] = process.argv.slice(2);
 const [file, hash] = page.split("#");
-const url = "file://" + resolve(file) + (hash ? "#" + hash : "");
+const url = (/^https?:\/\//.test(file) ? file : "file://" + resolve(file)) + (hash ? "#" + hash : "");
 const CH = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const port = 9400 + Math.floor(Math.random() * 400);
 const chrome = spawn(CH, ["--headless=new", "--disable-gpu", "--hide-scrollbars", `--remote-debugging-port=${port}`, `--user-data-dir=/tmp/shot-prof-${port}`, "about:blank"], { stdio: "ignore" });

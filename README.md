@@ -24,7 +24,7 @@ Near-black background, one violet→orange glow, glass tiles, faint noise. Colou
 
 ## Deploy
 
-Step 2 of the plan. `.github/workflows/pages.yml` publishes to GitHub Pages on every push and refreshes publication metadata weekly; it does nothing until the repo lives on GitHub.
+Live at https://yeonguk-choi.github.io (GitHub repo `YeongUk-Choi/YeongUk-Choi.github.io`, Pages source = branch `main`, `/`). Every push to `main` republishes the site; `.nojekyll` makes Pages copy files as-is. `.github/workflows/pages.yml` only refreshes `data/publications.js` weekly (Sunday 03:00 KST) and commits it back.
 
 ## Publications
 
