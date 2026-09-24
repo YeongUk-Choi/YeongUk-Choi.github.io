@@ -27,6 +27,26 @@
     });
     document.querySelectorAll("[data-mail]").forEach(b => { if (P.email) b.href = "mailto:" + P.email; else b.style.display = "none"; });
     const y = $("[data-year]"); if (y) y.textContent = new Date().getFullYear();
+    rotatePhotos();
+  }
+
+  /* ---- hero photo slideshow: fade out → swap src → fade in, every P.photoInterval ms ---- */
+  function rotatePhotos() {
+    const photos = (P.photos || []).filter(Boolean);
+    const imgs = [...document.querySelectorAll('img[data-profile="photo"]')];
+    if (photos.length < 2 || !imgs.length) return;
+    photos.forEach(src => { const i = new Image(); i.src = src; });      // preload so the swap never flashes empty
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    imgs.forEach(img => { img.src = photos[0]; img.classList.add("photo-fade"); });
+    let idx = 0;
+    const swap = () => {
+      if (document.hidden) return;                                       // don't advance in a background tab
+      idx = (idx + 1) % photos.length;
+      if (still) { imgs.forEach(img => { img.src = photos[idx]; }); return; }
+      imgs.forEach(img => img.classList.add("is-out"));
+      setTimeout(() => { imgs.forEach(img => { img.src = photos[idx]; img.classList.remove("is-out"); }); }, 450);
+    };
+    setInterval(swap, Math.max(1500, +P.photoInterval || 5000));
   }
 
   /* ---- home bento numbers ---- */

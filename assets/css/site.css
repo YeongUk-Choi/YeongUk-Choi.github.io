@@ -124,6 +124,8 @@ h1.page { font-size: clamp(34px, 4.5vw, 56px); letter-spacing: -0.03em; line-hei
 }
 .photo-card img { display: block; width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 18px; filter: grayscale(0);
   background: radial-gradient(ellipse 70% 60% at 50% 38%, rgba(139,92,246,0.55), rgba(139,92,246,0.10) 55%, rgba(12,10,20,0.6) 100%), linear-gradient(180deg, #17122a, #0b0a12); }
+.photo-fade { transition: opacity .45s ease; }
+.photo-fade.is-out { opacity: 0; }
 .photo-card .meta { padding: 14px 6px 4px; display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
 .photo-card .name { font-weight: 700; font-size: 20px; letter-spacing: -0.02em; }
 .photo-card .aff { color: var(--fg-2); font-size: 14px; }
