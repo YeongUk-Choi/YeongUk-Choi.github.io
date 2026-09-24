@@ -29,8 +29,6 @@ window.SITE.profile = {
   orcid: "",                                   // 없음. 논문은 Google Scholar 기준 (scripts/fetch_scholar.py)
   scholarUrl: "https://scholar.google.com/citations?user=GAX2tHgAAAAJ&hl=en",
   scholarUser: "GAX2tHgAAAAJ",
-  availability: {                              // 주간 가능 요일 (임시) — E-20 대기
-    Mon: "busy", Tue: "open", Wed: "busy", Thu: "open", Fri: "lab"
-  },
+  // 주간 요일표(availability)는 2026-09-24 월간 달력(data/schedule.js)으로 대체됨
   siteUrl: ""                                  // 배포 후 최종 주소 (QR에 들어갈 값)
 };

@@ -52,11 +52,12 @@
   /* ---- home bento numbers ---- */
   function renderHome() {
     const meas = S.measurements || [], pubs = (S.publications || []).filter(p => !p.placeholder), mats = S.materials || [];
-    const av = P.availability || {}; const openDays = Object.keys(av).filter(d => av[d] === "open");
     $("#n-meas").textContent = meas.length;
     $("#n-pubs").textContent = pubs.length || "—";
     $("#n-pubs-sub").textContent = pubs.length ? "peer-reviewed papers · from Google Scholar" : "list not loaded yet";
-    $("#n-sched").textContent = openDays.length ? openDays.join(" · ") : "—";
+    const next = upcomingEvents(1)[0];
+    $("#n-sched").textContent = next ? fmtRange(next) : "—";
+    const sub = $("#n-sched-sub"); if (sub) sub.textContent = next ? next.title : "no dates marked yet";
     $("#n-mats").textContent = mats.length;
     $("#focus-line").textContent = S.focusLine || "";
     $("#meas-sub").textContent = meas.filter(m => m.featured).map(m => m.name).join(" · ");
@@ -114,14 +115,54 @@
     if (P.orcid) links.append(Object.assign(el("a", "btn", "ORCID ↗"), { href: "https://orcid.org/" + P.orcid, target: "_blank", rel: "noopener" }));
   }
 
-  /* ---- schedule ---- */
+  /* ---- schedule: monthly calendar (data/schedule.js) ---- */
+  const SCH = S.schedule || {}; const EVENTS = (SCH.events || []).map(e => ({ ...e, s: pd(e.start), e: pd(e.end || e.start) })).filter(e => e.s && e.e);
+  const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function pd(str) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || ""); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; }
+  const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  const today = () => { const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()); };
+  function fmtRange(ev) {
+    const m = d => MONTHS[d.getMonth()].slice(0, 3);
+    if (sameDay(ev.s, ev.e)) return `${m(ev.s)} ${ev.s.getDate()}`;
+    if (ev.s.getMonth() === ev.e.getMonth()) return `${m(ev.s)} ${ev.s.getDate()}–${ev.e.getDate()}`;
+    return `${m(ev.s)} ${ev.s.getDate()} – ${m(ev.e)} ${ev.e.getDate()}`;
+  }
+  function upcomingEvents(n) { const t = today(); return EVENTS.filter(ev => ev.e >= t).sort((a, b) => a.s - b.s).slice(0, n || EVENTS.length); }
+  let calY, calM;
+  function renderMonth(y, m) {
+    calY = y; calM = m;
+    const ws = +SCH.weekStart || 0; const t = today();
+    $("#cal-title").textContent = `${MONTHS[m]} ${y}`;
+    const dow = $("#cal-dow"); dow.innerHTML = ""; for (let i = 0; i < 7; i++) dow.append(el("div", "", DOW[(i + ws) % 7]));
+    const grid = $("#cal-grid"); grid.innerHTML = "";
+    const first = new Date(y, m, 1); const lead = (first.getDay() - ws + 7) % 7; const days = new Date(y, m + 1, 0).getDate();
+    const cells = Math.ceil((lead + days) / 7) * 7;
+    for (let i = 0; i < cells; i++) {
+      const d = new Date(y, m, i - lead + 1); const inMonth = d.getMonth() === m;
+      const c = el("div", "cal-cell" + (inMonth ? "" : " out") + (sameDay(d, t) ? " today" : "") + (d.getDay() === 0 ? " sun" : ""));
+      c.append(el("div", "n", d.getDate()));
+      EVENTS.filter(ev => d >= ev.s && d <= ev.e).forEach(ev => {
+        const startsHere = sameDay(d, ev.s) || i % 7 === 0;
+        const chip = el("div", "ev " + (ev.kind || "event") + (startsHere ? "" : " cont") + (sameDay(d, ev.e) ? " last" : ""), startsHere ? esc(ev.title) : "&nbsp;");
+        chip.title = `${ev.title} · ${fmtRange(ev)}`; c.append(chip);
+      });
+      grid.append(c);
+    }
+  }
   function renderSchedule() {
-    const week = $("#week"); const av = P.availability || {}; const label = { open: "Open", busy: "Busy", lab: "In lab" };
-    ["Mon", "Tue", "Wed", "Thu", "Fri"].forEach(d => {
-      const st = av[d] || "busy"; const c = el("div", "day " + st); c.append(el("div", "d", d), el("div", "s", label[st] || st)); week.append(c);
+    const t = today(); renderMonth(t.getFullYear(), t.getMonth());
+    $("[data-cal-prev]").onclick = () => renderMonth(calM === 0 ? calY - 1 : calY, (calM + 11) % 12);
+    $("[data-cal-next]").onclick = () => renderMonth(calM === 11 ? calY + 1 : calY, (calM + 1) % 12);
+    const list = $("#cal-list"); const up = upcomingEvents();
+    if (!up.length) list.append(el("li", "cal-item empty", "Nothing marked yet — every day is open by appointment."));
+    up.forEach(ev => {
+      const li = el("li", "cal-item " + (ev.kind || "event"));
+      li.innerHTML = `<span class="when">${esc(fmtRange(ev))}<small>${ev.s.getFullYear()}</small></span><span class="what"><b>${esc(ev.title)}</b>${ev.note ? `<span class="note">${esc(ev.note)}</span>` : ""}</span>`;
+      li.onclick = () => renderMonth(ev.s.getFullYear(), ev.s.getMonth()); list.append(li);
     });
     const box = $("#cal-embed");
-    if (P.calendarEmbedUrl) { const f = document.createElement("iframe"); f.src = P.calendarEmbedUrl; f.loading = "lazy"; box.innerHTML = ""; box.append(f); }
+    if (P.calendarEmbedUrl) { const f = document.createElement("iframe"); f.src = P.calendarEmbedUrl; f.loading = "lazy"; box.innerHTML = ""; box.append(f); box.hidden = false; }
   }
 
   /* ---- focus: tiny markdown ---- */
@@ -142,7 +183,7 @@
   }
   function renderFocus() { $("#focus-body").innerHTML = md(S.focusMarkdown || ""); }
 
-  window.Site = { renderChrome, renderHome, renderMeasurements, renderPublications, renderSchedule, renderFocus };
+  window.Site = { renderChrome, renderHome, renderMeasurements, renderPublications, renderSchedule, renderFocus, renderMonth };
   document.addEventListener("DOMContentLoaded", () => {
     renderChrome();
     const page = document.body.dataset.page;
