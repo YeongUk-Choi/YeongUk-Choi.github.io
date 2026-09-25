@@ -55,9 +55,20 @@
     $("#n-meas").textContent = meas.length;
     $("#n-pubs").textContent = pubs.length || "—";
     $("#n-pubs-sub").textContent = pubs.length ? "peer-reviewed papers · from Google Scholar" : "list not loaded yet";
-    const next = upcomingEvents(1)[0];
-    $("#n-sched").textContent = next ? fmtRange(next) : "—";
-    const sub = $("#n-sched-sub"); if (sub) sub.textContent = next ? next.title : "no dates marked yet";
+    /* schedule tile: every event within the next 2 months, scrollable inside the tile (2026-09-25 UK) */
+    const t = today(), lim = new Date(t.getFullYear(), t.getMonth() + 2, t.getDate());
+    const soon = upcomingEvents().filter(ev => ev.s <= lim);
+    const list = $("#n-sched-list"), sub = $("#n-sched-sub");
+    if (list) {
+      list.innerHTML = "";
+      if (!soon.length) list.append(el("li", "empty", "no dates in the next 2 months"));
+      soon.forEach(ev => {
+        const li = el("li", ev.kind || "event"); const tent = tentativeDays(ev);
+        li.innerHTML = `<span class="when">${esc(fmtRange(ev))}</span><span class="what">${esc(ev.title)}${tent ? `<small>${esc(tent)}</small>` : ""}</span>`;
+        li.title = `${ev.title} · ${fmtRange(ev)}${tent ? " · " + tent : ""}`; list.append(li);
+      });
+    }
+    if (sub) sub.textContent = soon.length ? `next 2 months · ${soon.length}` : "next 2 months";
     $("#n-mats").textContent = mats.length;
     $("#focus-line").textContent = S.focusLine || "";
     $("#meas-sub").textContent = meas.filter(m => m.featured).map(m => m.name).join(" · ");
