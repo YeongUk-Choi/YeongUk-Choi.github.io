@@ -116,7 +116,11 @@
   }
 
   /* ---- schedule: monthly calendar (data/schedule.js) ---- */
-  const SCH = S.schedule || {}; const EVENTS = (SCH.events || []).map(e => ({ ...e, s: pd(e.start), e: pd(e.end || e.start) })).filter(e => e.s && e.e);
+  const SCH = S.schedule || {}; const EVENTS = (SCH.events || []).map(e => {
+    const s = pd(e.start), en = pd(e.end || e.start); const cf = Array.isArray(e.confirmed) ? e.confirmed : null;
+    /* confirmed: ["YYYY-MM-DD","YYYY-MM-DD"] → days of the event outside this range are tentative (drawn faded) */
+    return { ...e, s, e: en, cs: cf ? pd(cf[0]) || s : s, ce: cf ? pd(cf[1] || cf[0]) || en : en };
+  }).filter(e => e.s && e.e);
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   function pd(str) { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str || ""); return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null; }
@@ -127,6 +131,14 @@
     if (sameDay(ev.s, ev.e)) return `${m(ev.s)} ${ev.s.getDate()}`;
     if (ev.s.getMonth() === ev.e.getMonth()) return `${m(ev.s)} ${ev.s.getDate()}–${ev.e.getDate()}`;
     return `${m(ev.s)} ${ev.s.getDate()} – ${m(ev.e)} ${ev.e.getDate()}`;
+  }
+  function tentativeDays(ev) {
+    if (sameDay(ev.cs, ev.s) && sameDay(ev.ce, ev.e)) return "";
+    const m = d => MONTHS[d.getMonth()].slice(0, 3); const parts = [];
+    const rng = (a, b) => sameDay(a, b) ? `${m(a)} ${a.getDate()}` : (a.getMonth() === b.getMonth() ? `${m(a)} ${a.getDate()}–${b.getDate()}` : `${m(a)} ${a.getDate()} – ${m(b)} ${b.getDate()}`);
+    if (ev.cs > ev.s) parts.push(rng(ev.s, new Date(ev.cs - 864e5)));
+    if (ev.ce < ev.e) parts.push(rng(new Date(+ev.ce + 864e5), ev.e));
+    return parts.join(", ") + " tentative";
   }
   function upcomingEvents(n) { const t = today(); return EVENTS.filter(ev => ev.e >= t).sort((a, b) => a.s - b.s).slice(0, n || EVENTS.length); }
   let calY, calM;
@@ -155,7 +167,11 @@
         const c1 = Math.max(a, w * 7), c2 = Math.min(b, w * 7 + 6); const lane = lanes[w]++;
         const band = el("div", "ev " + (ev.kind || "event") + (c1 === idx(ev.s) ? " starts" : "") + (c2 === idx(ev.e) ? " ends" : ""), esc(ev.title));
         band.style.gridRow = String(w + 1); band.style.gridColumn = `${c1 % 7 + 1} / ${c2 % 7 + 2}`; band.style.setProperty("--lane", lane);
-        band.title = `${ev.title} · ${fmtRange(ev)}`; grid.append(band);
+        /* tentative days (outside ev.cs..ev.ce): fade that part of the band, keep it one continuous piece */
+        const n = c2 - c1 + 1; const clamp = v => Math.min(1, Math.max(0, v));
+        const L = clamp((idx(ev.cs) - c1) / n), R = clamp((idx(ev.ce) + 1 - c1) / n);
+        if (L > 0 || R < 1) { band.classList.add("tentative"); band.style.setProperty("--core-l", (L * 100).toFixed(2) + "%"); band.style.setProperty("--core-r", (R * 100).toFixed(2) + "%"); band.style.setProperty("--text-l", (L < 1 ? L * 100 : 0).toFixed(2) + "%"); }
+        const tent = tentativeDays(ev); band.title = `${ev.title} · ${fmtRange(ev)}${tent ? " · " + tent : ""}`; grid.append(band);
       }
     });
     grid.style.setProperty("--lanes", Math.max(1, ...lanes));
@@ -168,7 +184,7 @@
     if (!up.length) list.append(el("li", "cal-item empty", "Nothing marked yet — every day is open by appointment."));
     up.forEach(ev => {
       const li = el("li", "cal-item " + (ev.kind || "event"));
-      li.innerHTML = `<span class="when">${esc(fmtRange(ev))}<small>${ev.s.getFullYear()}</small></span><span class="what"><b>${esc(ev.title)}</b>${ev.note ? `<span class="note">${esc(ev.note)}</span>` : ""}</span>`;
+      li.innerHTML = `<span class="when">${esc(fmtRange(ev))}<small>${ev.s.getFullYear()}</small></span><span class="what"><b>${esc(ev.title)}</b>${ev.note ? `<span class="note">${esc(ev.note)}</span>` : ""}${tentativeDays(ev) ? `<span class="note tent">${esc(tentativeDays(ev))}</span>` : ""}</span>`;
       li.onclick = () => renderMonth(ev.s.getFullYear(), ev.s.getMonth()); list.append(li);
     });
     const box = $("#cal-embed");
