@@ -138,17 +138,27 @@
     const grid = $("#cal-grid"); grid.innerHTML = "";
     const first = new Date(y, m, 1); const lead = (first.getDay() - ws + 7) % 7; const days = new Date(y, m + 1, 0).getDate();
     const cells = Math.ceil((lead + days) / 7) * 7;
+    const weeks = cells / 7; const lanes = Array.from({ length: weeks }, () => 0);
     for (let i = 0; i < cells; i++) {
       const d = new Date(y, m, i - lead + 1); const inMonth = d.getMonth() === m;
       const c = el("div", "cal-cell" + (inMonth ? "" : " out") + (sameDay(d, t) ? " today" : "") + (d.getDay() === 0 ? " sun" : ""));
+      c.style.gridRow = String(Math.floor(i / 7) + 1); c.style.gridColumn = String(i % 7 + 1);
       c.append(el("div", "n", d.getDate()));
-      EVENTS.filter(ev => d >= ev.s && d <= ev.e).forEach(ev => {
-        const startsHere = sameDay(d, ev.s) || i % 7 === 0;
-        const chip = el("div", "ev " + (ev.kind || "event") + (startsHere ? "" : " cont") + (sameDay(d, ev.e) ? " last" : ""), startsHere ? esc(ev.title) : "&nbsp;");
-        chip.title = `${ev.title} · ${fmtRange(ev)}`; c.append(chip);
-      });
       grid.append(c);
     }
+    /* multi-day events: one band per week row, laid over the cells so it crosses the gaps */
+    const gridStart = new Date(y, m, 1 - lead); const gridEnd = new Date(y, m, cells - lead);
+    const idx = d => Math.round((d - gridStart) / 864e5);
+    EVENTS.filter(ev => ev.e >= gridStart && ev.s < gridEnd).sort((a, b) => a.s - b.s || b.e - a.e).forEach(ev => {
+      const a = Math.max(idx(ev.s), 0), b = Math.min(idx(ev.e), cells - 1);
+      for (let w = Math.floor(a / 7); w <= Math.floor(b / 7); w++) {
+        const c1 = Math.max(a, w * 7), c2 = Math.min(b, w * 7 + 6); const lane = lanes[w]++;
+        const band = el("div", "ev " + (ev.kind || "event") + (c1 === idx(ev.s) ? " starts" : "") + (c2 === idx(ev.e) ? " ends" : ""), esc(ev.title));
+        band.style.gridRow = String(w + 1); band.style.gridColumn = `${c1 % 7 + 1} / ${c2 % 7 + 2}`; band.style.setProperty("--lane", lane);
+        band.title = `${ev.title} · ${fmtRange(ev)}`; grid.append(band);
+      }
+    });
+    grid.style.setProperty("--lanes", Math.max(1, ...lanes));
   }
   function renderSchedule() {
     const t = today(); renderMonth(t.getFullYear(), t.getMonth());
