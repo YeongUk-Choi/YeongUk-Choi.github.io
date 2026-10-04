@@ -2,7 +2,7 @@
 // 손으로 고치는 칸: image(assets/img/pubs/…), imageCaption, imageCredit(라이선스·출처), featured(상단 고정), abstract(닫힌 논문).
 // 이 칸들은 스크립트를 다시 돌려도 DOI 기준으로 보존됩니다. Google Scholar는 프로필 링크로만 씁니다.
 window.SITE = window.SITE || {};
-window.SITE.publicationsMeta = {"source": "scholar", "updated": "2026-09-27", "count": 11, "scholarUser": "GAX2tHgAAAAJ"};
+window.SITE.publicationsMeta = {"source": "scholar", "updated": "2026-10-04", "count": 11, "scholarUser": "GAX2tHgAAAAJ"};
 window.SITE.publications = [
   {
     "year": 2026,
