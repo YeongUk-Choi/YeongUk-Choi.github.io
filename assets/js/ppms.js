@@ -180,10 +180,18 @@
 
   function msg(text, bad) { const m = $("#he-msg"); m.textContent = text; m.className = "he-msg" + (bad ? " bad" : " good"); }
 
+  /* the sheet round trip is ~2 s, so say so rather than showing an empty panel — and if it fails,
+     show nothing at all: a 0 that is really "unknown" is worse than no number */
   async function loadInventory() {
     if (offline) { EVENTS = loadLocal(); $("#he-offline").hidden = false; return renderStock(); }
-    try { EVENTS = (await api({ action: "list" })).events || []; } catch (e) { msg("Could not reach the sheet: " + e.message, true); }
-    renderStock();
+    $("#he-stock").append(el("p", "subtle", "Reading the sheet\u2026"));
+    try {
+      EVENTS = (await api({ action: "list" })).events || [];
+      renderStock();
+    } catch (e) {
+      $("#he-stock").innerHTML = "";
+      msg("Could not reach the sheet, so the counts are not shown: " + e.message, true);
+    }
   }
 
   function wireInventory() {

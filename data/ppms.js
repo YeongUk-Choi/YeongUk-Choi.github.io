@@ -3,7 +3,7 @@
 // 헬륨 병 재고는 Google Apps Script 웹앱(apiUrl)을 통해 구글 시트에 기록한다. 비어 있으면 브라우저 안에서만 도는 시연 모드.
 window.SITE = window.SITE || {};
 window.SITE.ppms = {
-  apiUrl: "",                                  // ← Apps Script 배포 후 여기에 웹앱 URL
+  apiUrl: "https://script.google.com/macros/s/AKfycby8gAEUJxLM9gJ_1x6U6g_v8N2yCMB9Rvum194fPG1Op7W8CPesnHKLdTpgotJ9FbudOA/exec",  // Apps Script 웹앱 (시트 기록). 2026-10-10 연결.
   statusUrl: "data/ppms-status.json",          // 최근값 한 덩어리
   logUrl: "data/ppms-log.csv",                 // ts,recon_temp_k,dewar_psi,heater_pct,ppms_temp_k,ppms_field_oe
   cylinder: "47 L",
