@@ -1,4 +1,4 @@
-// 월간 달력 일정. start/end는 "YYYY-MM-DD"(end 포함). kind: beamtime(보라) | measurement(초록, 외부 기관 측정) | conference(주황) | travel(회색) | event (색만 다름)
+// 월간 달력 일정. start/end는 "YYYY-MM-DD"(end 포함). kind: beamtime(보라) | measurement(초록, 외부 기관 측정) | conference(주황) | personal(슬레이트, 연구 외 개인 일정) | travel(회색) | event (색만 다름)
 // confirmed: ["시작","끝"] (선택) — 본 일정 범위. 범위 밖의 날은 예비일로 반투명 표시. 없으면 전체가 본 일정.
 // 2026-09-24 UK 지시: 주간 요일표 → 월간 달력. 첫 일정: PAL 4D PES 빔타임 (10/4–7, UK 수정 지시).
 window.SITE = window.SITE || {};
@@ -14,6 +14,8 @@ window.SITE.schedule = {
     { start: "2026-10-13", title: "Gachon Univ. : TEM", kind: "measurement", note: "Gachon University · TEM measurement" },
     { start: "2026-10-19", end: "2026-10-23", confirmed: ["2026-10-20", "2026-10-22"], title: "PAL : 3A XRS", kind: "beamtime", note: "Pohang Accelerator Laboratory" },
     // 2026-09-25 UK 지시: 본 일정 10/27–30, 예비일 10/26·10/31
-    { start: "2026-10-26", end: "2026-10-31", confirmed: ["2026-10-27", "2026-10-30"], title: "PAL : 2A MS_MPK", kind: "beamtime", note: "Pohang Accelerator Laboratory" }
+    { start: "2026-10-26", end: "2026-10-31", confirmed: ["2026-10-27", "2026-10-30"], title: "PAL : 2A MS_MPK", kind: "beamtime", note: "Pohang Accelerator Laboratory" },
+    // 2026-10-10 UK 지시: 11/20 하루, 예비군 훈련 (연구 외 개인 일정 = personal, 슬레이트)
+    { start: "2026-11-20", title: "Military Service", kind: "personal", note: "Reserve forces training" }
   ]
 };
