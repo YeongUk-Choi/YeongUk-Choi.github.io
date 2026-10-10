@@ -1,0 +1,8 @@
+{
+  "demo": true,
+  "updated": "2026-10-10T16:28:00+09:00",
+  "source": "demo",
+  "recondenser": { "temp_k": 3.24, "temp_raw_k": 5.218, "pressure_psi": 0.47, "heater_pct": 11.8 },
+  "ppms": { "temp_k": 300.2, "field_oe": 0, "chamber": "Purged and sealed", "status": "idle" },
+  "compressor": { "state": "on", "low_psig": 101, "high_psig": 298 }
+}

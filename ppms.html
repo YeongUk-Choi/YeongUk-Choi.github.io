@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PPMS — YeongUk Choi</title>
+<meta name="theme-color" content="#050507">
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="assets/css/site.css">
+<script src="data/profile.js"></script>
+<script src="data/ppms.js"></script>
+<script src="assets/js/site.js"></script>
+<script src="assets/js/ppms.js"></script>
+</head>
+<body data-page="ppms">
+<div class="bg-glow"></div><div class="bg-noise"></div>
+<nav class="nav"><div class="wrap">
+  <a class="brand" href="index.html"><span class="dot"></span><span data-profile="name">UK</span></a>
+  <div class="nav-links"><a href="index.html" data-page="home">Home</a><a href="schedule.html" data-page="schedule">Schedule</a><a href="measurements.html" data-page="measurements">Measurements</a><a href="publications.html" data-page="publications">Papers</a><a href="focus.html" data-page="focus">Focus</a><a href="materials.html" data-page="materials">Materials</a><a href="ppms.html" data-page="ppms">PPMS</a></div>
+  <a class="nav-menu" href="index.html">Menu</a>
+</div></nav>
+<main><div class="wrap">
+
+<div class="eyebrow">PPMS &amp; Helium</div>
+<h1 class="page">What the cryostat is doing.</h1>
+<p class="lede">The lab PC logs the recondenser and the PPMS every few minutes so a pressure drift can be traced back in time, not guessed at. Below that, how many 47 L helium cylinders are on the floor.</p>
+
+<div class="note-bar" id="ppms-banner" hidden><b>Demo numbers.</b> The lab PC collector is not connected yet — the readings and curves below are placeholders for checking the layout.</div>
+
+<h2 class="sec">Now</h2>
+<div class="subtle" id="ppms-updated"></div>
+<div class="pgrid" id="ppms-status"></div>
+
+<h2 class="sec">Trend</h2>
+<div class="winbar"><button class="btn small" data-win="24">24 h</button><button class="btn small" data-win="168">7 days</button><button class="btn small" data-win="720">30 days</button></div>
+<figure class="chart-fig">
+  <figcaption>Recondenser cold tip temperature <small>K · calibration offset applied</small></figcaption>
+  <div class="chart-host" id="chart-temp"></div>
+</figure>
+<figure class="chart-fig">
+  <figcaption>Dewar pressure <small>psi · dashed line is the 0.45 psi setpoint</small></figcaption>
+  <div class="chart-host" id="chart-psi"></div>
+</figure>
+
+<h2 class="sec">Helium cylinders</h2>
+<div class="note-bar" id="he-offline" hidden><b>Not connected to the sheet yet.</b> Entries below are kept in this browser only, so you can try the buttons. They disappear on another device.</div>
+<div class="he-grid" id="he-stock"></div>
+
+<form class="he-form" id="he-form">
+  <select id="he-sup-sel" aria-label="Supplier"></select>
+  <select id="he-act" aria-label="What happened"></select>
+  <input id="he-qty" type="number" min="1" value="1" aria-label="How many cylinders">
+  <input id="he-note" type="text" placeholder="note (optional)" aria-label="Note">
+  <input id="he-code" type="password" placeholder="edit code" autocomplete="current-password" aria-label="Edit code">
+  <button class="btn primary" id="he-save" type="submit">Record</button>
+</form>
+<div class="he-msg" id="he-msg"></div>
+<ul class="he-log" id="he-log"></ul>
+
+</div></main>
+<footer><div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <span>© <span data-year></span> <span data-profile="name">UK</span> · <span data-profile-aff></span></span>
+  <span class="subtle">Static site · no tracking</span>
+</div></footer>
+</body>
+</html>
