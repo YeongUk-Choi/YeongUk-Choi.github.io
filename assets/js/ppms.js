@@ -25,13 +25,73 @@
     return c;
   }
 
+  /* The collector posts to the Apps Script web app; the page reads what arrived there.
+     Every reading carries the server's receipt time as well as the lab PC's clock, and
+     age is measured against the server's — a PC whose clock drifted must still look stale. */
+  let TEL = null, SKEW = 0;
+  async function loadTelemetry() {
+    /* Gated by config: an Apps Script that has not been redeployed yet counts an unknown
+       action as a wrong edit code, and five page views would lock the inventory for ten
+       minutes. The flag is flipped after the new version is deployed, not before. */
+    if (!C.apiUrl || !C.telemetry) return null;
+    try {
+      const r = await fetch(C.apiUrl + "?action=telemetry", { cache: "no-store" });
+      if (!r.ok) return null;
+      const d = await r.json();
+      if (!d || !d.ok) return null;
+      /* The visitor's clock is not trustworthy either. One offset, measured once. */
+      if (d.server_ts) SKEW = Date.now() - new Date(d.server_ts).getTime();
+      return d;
+    } catch (e) { return null; }   /* not deployed yet, or no network */
+  }
+
+  const seen = m => (m && m.ts) ? new Date(m.ts).getTime() + SKEW : null;
+  const staleAt = ms => ms == null || (Date.now() - ms) / 6e4 > (L.staleMin || 15);
+  /* A measurement that stopped arriving keeps its last value but loses its state word:
+     a green "normal" on an hour-old number is the one failure mode worth designing out. */
+  const freshness = ms => ms == null ? "" : staleAt(ms)
+    ? `${esc(ago(Date.now() - ms))} · not updating` : `${esc(ago(Date.now() - ms))}`;
+
   async function renderStatus() {
     const box = $("#ppms-status"), banner = $("#ppms-banner");
+    TEL = await loadTelemetry();
+    const latest = (TEL && TEL.latest) || {};
+    const live = latest.temp_k || latest.psi || latest.heater_w;
     let s = null;
-    try { const r = await fetch(C.statusUrl, { cache: "no-store" }); if (r.ok) s = await r.json(); } catch (e) { /* offline or not deployed yet */ }
-    if (!s) { box.append(el("p", "subtle", "No reading has been uploaded yet. The lab PC collector is not connected.")); return; }
-    if (s.demo) banner.hidden = false;
+    if (!live) {
+      try { const r = await fetch(C.statusUrl, { cache: "no-store" }); if (r.ok) s = await r.json(); } catch (e) { /* offline or not deployed yet */ }
+      if (!s) { box.append(el("p", "subtle", "No reading has been uploaded yet. The lab PC collector is not connected.")); return; }
+      if (s.demo) banner.hidden = false;
+      return renderFromFile(box, s);
+    }
+    if (latest.src && latest.src !== "LIVE") banner.hidden = false;   /* MOCK or TEST data */
 
+    const tSeen = seen(latest.temp_k), pSeen = seen(latest.psi), hSeen = seen(latest.heater_w);
+    const collector = seen({ ts: latest.seen });
+    $("#ppms-updated").innerHTML = collector == null ? ""
+      : `Collector last reported ${esc(ago(Date.now() - collector))} · ${esc(stamp(new Date(collector)))} ` +
+        (staleAt(collector) ? chip("crit", "stale") : chip("ok", "live"));
+
+    const temp = latest.temp_k ? latest.temp_k.v : null, psi = latest.psi ? latest.psi.v : null;
+    const sp = L.pressureSetpoint, d = psi == null ? null : psi - sp;
+    /* State words are withheld once a value stops updating, so the chip never vouches
+       for a number the instrument is no longer producing. */
+    const pState = (d == null || staleAt(pSeen)) ? null : Math.abs(d) >= L.pressureCrit ? "crit" : Math.abs(d) >= L.pressureWarn ? "warn" : "ok";
+    const tState = (temp == null || staleAt(tSeen)) ? null : temp >= L.tempCrit ? "crit" : temp >= L.tempWarn ? "warn" : "ok";
+    const device = (name, status) => !status || status === "OK" ? "" : ` · ${esc(name)} ${esc(status.toLowerCase())}`;
+
+    box.append(
+      card("Recondenser cold tip", num(temp, 2), "K", tState, tState === "ok" ? "normal" : tState === "warn" ? "warm" : "too warm",
+        freshness(tSeen) + device("SCM10", latest.scm)),
+      card("Dewar pressure", num(psi, 3), "psi", pState, pState === "ok" ? "on setpoint" : pState === "warn" ? "off setpoint" : "far off setpoint",
+        (d == null ? "" : `setpoint ${sp} psi · ${d >= 0 ? "+" : ""}${d.toFixed(3)} psi · `) + freshness(pSeen) + device("HRC", latest.hrc)),
+      /* The HRC reports watts, not a percentage — the units the instrument actually sends. */
+      card("HRC heater", num(latest.heater_w ? latest.heater_w.v : null, 2), "W", null, "",
+        "0 W while the pressure rises is the September fault signature")
+    );
+  }
+
+  function renderFromFile(box, s) {
     const up = new Date(s.updated), stale = (Date.now() - up) / 6e4 > (L.staleMin || 15);
     $("#ppms-updated").innerHTML = `Last reading ${esc(ago(Date.now() - up))} · ${esc(stamp(up))} ${stale ? chip("crit", "stale") : chip("ok", "live")}`;
 
@@ -55,6 +115,13 @@
   /* ---------- trend charts ---------- */
   let LOG = [];
   async function loadLog() {
+    /* Points come from the same telemetry call renderStatus already made: one request,
+       not two, and the chart can never disagree with the cards above it. */
+    if (TEL && TEL.points && TEL.points.length) {
+      LOG = TEL.points.map(p => ({ t: new Date(p[0]), recon_temp_k: p[1], dewar_psi: p[2], heater_w: p[3] }))
+                      .filter(o => o.t && !isNaN(o.t));
+      return;
+    }
     try {
       const r = await fetch(C.logUrl, { cache: "no-store" }); if (!r.ok) return;
       const lines = (await r.text()).trim().split(/\r?\n/); const head = lines.shift().split(",").map(h => h.trim());
@@ -113,7 +180,10 @@
   function drawTrends() {
     const cut = Date.now() - win * 36e5;
     const rows = LOG.filter(r => +r.t >= cut);
-    const series = (key, f) => rows.map(r => ({ t: r.t, v: +r[key] })).filter(p => !isNaN(p.v));
+    /* null is a gap the instrument did not fill; +null is 0 and would draw a cold tip at
+       absolute zero, so missing points are dropped rather than coerced. */
+    const series = key => rows.map(r => ({ t: r.t, v: r[key] == null || r[key] === "" ? NaN : +r[key] }))
+                              .filter(p => !isNaN(p.v));
     lineChart($("#chart-temp"), series("recon_temp_k"), { title: "Recondenser cold tip temperature", unit: "K", dp: 2, color: "var(--violet-2)" });
     lineChart($("#chart-psi"), series("dewar_psi"), { title: "Dewar pressure", unit: "psi", dp: 3, color: "var(--orange)", include: L.pressureSetpoint });
     document.querySelectorAll("[data-win]").forEach(b => b.classList.toggle("on", +b.dataset.win === win));
@@ -221,8 +291,8 @@
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
-    renderStatus();
     wireInventory(); loadInventory();
+    await renderStatus();          /* fills TEL, which loadLog reads */
     await loadLog(); drawTrends();
     document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => { win = +b.dataset.win; drawTrends(); });
     addEventListener("resize", () => { clearTimeout(window._pr); window._pr = setTimeout(drawTrends, 150); });
