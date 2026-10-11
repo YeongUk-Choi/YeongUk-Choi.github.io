@@ -6,8 +6,8 @@ window.SITE.ppms = {
   apiUrl: "https://script.google.com/macros/s/AKfycby8gAEUJxLM9gJ_1x6U6g_v8N2yCMB9Rvum194fPG1Op7W8CPesnHKLdTpgotJ9FbudOA/exec",  // Apps Script 웹앱 (시트 기록). 2026-10-10 연결.
   // 연구실 PC 수집기가 웹앱으로 온도·압력을 올리는 경로. Apps Script 를 새 버전으로 배포한 뒤에만 켠다.
   // 끈 상태에서는 아래 statusUrl/logUrl(정적 파일)을 그대로 읽는다.
-  // 주의: 옛 버전 웹앱은 모르는 action 을 "코드 틀림"으로 세므로, 배포 전에 켜면 재고 수정이 10분 잠긴다.
-  telemetry: false,
+  // 2026-10-11 새 버전 배포 확인 후 켬 (?action=telemetry 가 ok:true 응답).
+  telemetry: true,
   statusUrl: "data/ppms-status.json",          // 최근값 한 덩어리
   logUrl: "data/ppms-log.csv",                 // ts,recon_temp_k,dewar_psi,heater_pct,ppms_temp_k,ppms_field_oe
   cylinder: "47 L",
