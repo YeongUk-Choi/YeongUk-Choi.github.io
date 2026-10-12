@@ -110,6 +110,16 @@ h1.page { font-size: clamp(34px, 4.5vw, 56px); letter-spacing: -0.03em; line-hei
 .tile .t-list .when { font-weight: 700; font-size: 15px; letter-spacing: -0.02em; white-space: nowrap; }
 .tile .t-list .what { font-size: 14px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile .t-list .what small { display: block; font-size: 11.5px; color: var(--fg-3); }
+/* PPMS tile: a live status strip, not a count — full width so three readings fit on one line */
+.bento .ppms { grid-column: span 12; min-height: 0; }
+.tile.ppms .t-label .pt-state { margin: 0 auto 0 10px; display: inline-flex; }
+.tile.ppms .ppms-strip { display: flex; flex-wrap: wrap; gap: 14px 42px; margin: 16px 0 10px; }
+.tile.ppms .ps { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.tile.ppms .ps b { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+.tile.ppms .ps small { font-size: 14px; font-weight: 600; color: var(--fg-3); }
+.tile.ppms .ps span { font-size: 13px; color: var(--fg-3); margin-left: 4px; }
+/* a value that stopped arriving is dimmed, so the eye does not read it as current */
+.tile.ppms .ps.dim b, .tile.ppms .ps.dim small { color: var(--fg-3); }
 .bento .meas  { grid-column: span 4; }
 .bento .pubs  { grid-column: span 4; }
 .bento .mats  { grid-column: span 4; }
@@ -387,6 +397,12 @@ h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: 0.14em; col
   .bento { grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; }
   .bento .focus { grid-column: span 2; order: -1; min-height: 190px; }
   .bento .sched, .bento .meas, .bento .pubs, .bento .mats { grid-column: span 1; }
+  /* on a phone the live status sits right under Focus — that is what a QR visitor in the
+     lab looks for, and it keeps the two-column rows below it full */
+  .bento .ppms { grid-column: span 2; order: -1; }
+  .tile.ppms .ppms-strip { gap: 10px 20px; margin: 12px 0 8px; }
+  .tile.ppms .ps { flex: 1 1 86px; display: grid; grid-template-columns: auto auto; justify-content: start; align-items: baseline; }
+  .tile.ppms .ps b { font-size: 25px; } .tile.ppms .ps span { grid-column: 1 / -1; margin: 2px 0 0; font-size: 12px; }
   .tile { padding: 16px 16px; min-height: 130px; }
   .bento .sched { max-height: 230px; }
   .tile .t-list li { grid-template-columns: 1fr; gap: 1px; padding: 5px 0 5px 8px; } .tile .t-list .when { font-size: 13.5px; } .tile .t-list .what { font-size: 13px; white-space: normal; }

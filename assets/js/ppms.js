@@ -13,7 +13,6 @@
   /* ---------- status ---------- */
   const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const stamp = d => `${MON[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  const ago = ms => { const m = Math.round(ms / 6e4); if (m < 1) return "just now"; if (m < 60) return m + " min ago"; const h = Math.floor(m / 60); return h < 24 ? `${h} h ${m % 60} min ago` : `${Math.floor(h / 24)} d ago`; };
   /* state is always rendered with its own word, never colour alone (red/green are hard to tell apart for deutan readers) */
   const chip = (state, word) => `<span class="st ${state}">${esc(word)}</span>`;
 
@@ -25,28 +24,13 @@
     return c;
   }
 
-  /* The collector posts to the Apps Script web app; the page reads what arrived there.
-     Every reading carries the server's receipt time as well as the lab PC's clock, and
-     age is measured against the server's — a PC whose clock drifted must still look stale. */
-  let TEL = null, SKEW = 0;
-  async function loadTelemetry() {
-    /* Gated by config: an Apps Script that has not been redeployed yet counts an unknown
-       action as a wrong edit code, and five page views would lock the inventory for ten
-       minutes. The flag is flipped after the new version is deployed, not before. */
-    if (!C.apiUrl || !C.telemetry) return null;
-    try {
-      const r = await fetch(C.apiUrl + "?action=telemetry", { cache: "no-store" });
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (!d || !d.ok) return null;
-      /* The visitor's clock is not trustworthy either. One offset, measured once. */
-      if (d.server_ts) SKEW = Date.now() - new Date(d.server_ts).getTime();
-      return d;
-    } catch (e) { return null; }   /* not deployed yet, or no network */
-  }
-
-  const seen = m => (m && m.ts) ? new Date(m.ts).getTime() + SKEW : null;
-  const staleAt = ms => ms == null || (Date.now() - ms) / 6e4 > (L.staleMin || 15);
+  /* Telemetry fetch, clock skew and the stale/warn thresholds live in ppms-live.js so
+     the home tile and this page can never disagree about them. */
+  const Live = window.PPMSLive;
+  let TEL = null;
+  const seen = m => Live.seen(m);
+  const staleAt = ms => Live.staleAt(ms);
+  const ago = ms => Live.ago(ms);
   /* A measurement that stopped arriving keeps its last value but loses its state word:
      a green "normal" on an hour-old number is the one failure mode worth designing out. */
   const freshness = ms => ms == null ? "" : staleAt(ms)
@@ -54,7 +38,7 @@
 
   async function renderStatus() {
     const box = $("#ppms-status"), banner = $("#ppms-banner");
-    TEL = await loadTelemetry();
+    TEL = await Live.load();
     const latest = (TEL && TEL.latest) || {};
     const live = latest.temp_k || latest.psi || latest.heater_w;
     let s = null;
@@ -74,10 +58,8 @@
 
     const temp = latest.temp_k ? latest.temp_k.v : null, psi = latest.psi ? latest.psi.v : null;
     const sp = L.pressureSetpoint, d = psi == null ? null : psi - sp;
-    /* State words are withheld once a value stops updating, so the chip never vouches
-       for a number the instrument is no longer producing. */
-    const pState = (d == null || staleAt(pSeen)) ? null : Math.abs(d) >= L.pressureCrit ? "crit" : Math.abs(d) >= L.pressureWarn ? "warn" : "ok";
-    const tState = (temp == null || staleAt(tSeen)) ? null : temp >= L.tempCrit ? "crit" : temp >= L.tempWarn ? "warn" : "ok";
+    const pState = Live.pressState(psi, staleAt(pSeen));
+    const tState = Live.tempState(temp, staleAt(tSeen));
     const device = (name, status) => !status || status === "OK" ? "" : ` · ${esc(name)} ${esc(status.toLowerCase())}`;
 
     box.append(
