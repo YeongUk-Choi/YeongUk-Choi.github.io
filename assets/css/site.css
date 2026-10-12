@@ -365,7 +365,17 @@ h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: 0.14em; col
   .wrap { padding: 0 18px; }
   main { padding: 24px 0 72px; }
   .nav-links { display: none; }
-  .nav-menu { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-2); }
+  .nav-menu { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-2); cursor: pointer; }
+  .nav-menu::after { content: "▾"; font-size: 11px; transition: transform .18s ease; }
+  .nav.open .nav-menu { color: var(--fg); }
+  .nav.open .nav-menu::after { transform: rotate(180deg); }
+  .nav.open .nav-links {
+    display: flex; flex-direction: column; gap: 2px; position: absolute; top: 56px; left: 18px; right: 18px;
+    background: rgba(10,10,14,0.96); backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid var(--line); border-radius: 14px; padding: 6px; box-shadow: 0 24px 60px -20px #000;
+  }
+  .nav.open .nav-links a { padding: 12px 14px; border-radius: 10px; font-size: 15px; }
+  .nav.open .nav-links a.active { background: rgba(255,255,255,0.06); color: var(--fg); }
   .hero { grid-template-columns: 1fr; gap: 22px; padding-top: 10px; }
   .hero-top { display: flex; align-items: center; gap: 14px; }
   .hero-top img { width: 84px; height: 84px; border-radius: 50%; object-fit: cover; border: 2px solid rgba(255,255,255,0.18); box-shadow: 0 0 40px -10px var(--violet);

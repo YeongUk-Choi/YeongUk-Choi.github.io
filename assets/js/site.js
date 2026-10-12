@@ -27,7 +27,26 @@
     });
     document.querySelectorAll("[data-mail]").forEach(b => { if (P.email) b.href = "mailto:" + P.email; else b.style.display = "none"; });
     const y = $("[data-year]"); if (y) y.textContent = new Date().getFullYear();
+    navMenu();
     rotatePhotos();
+  }
+
+  /* ---- phones: the link row is hidden, so "Menu" opens it as a panel. No JS → it still goes home. ---- */
+  function navMenu() {
+    const nav = $(".nav"), btn = $(".nav-menu");
+    if (!nav || !btn) return;
+    const narrow = matchMedia("(max-width: 820px)");
+    btn.setAttribute("role", "button");
+    btn.setAttribute("aria-expanded", "false");
+    const set = open => { nav.classList.toggle("open", open); btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", e => {
+      if (!narrow.matches) return;                                       // wide screens keep the full row
+      e.preventDefault();
+      set(!nav.classList.contains("open"));
+    });
+    document.addEventListener("click", e => { if (!nav.contains(e.target)) set(false); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") set(false); });
+    narrow.addEventListener("change", () => set(false));
   }
 
   /* ---- hero photo slideshow: fade out → swap src → fade in, every P.photoInterval ms ---- */
