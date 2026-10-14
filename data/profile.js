@@ -29,5 +29,6 @@ window.SITE.profile = {
   scholarUrl: "https://scholar.google.com/citations?user=GAX2tHgAAAAJ&hl=en",
   scholarUser: "GAX2tHgAAAAJ",
   // 주간 요일표(availability)는 2026-09-24 월간 달력(data/schedule.js)으로 대체됨
-  siteUrl: ""                                  // 배포 후 최종 주소 (QR에 들어갈 값)
+  siteUrl: "https://yeonguk-choi.github.io"    // QR·링크 미리보기(og 태그)에 들어가는 주소
+  // 연락처 저장 파일은 /contact.vcf (사진 포함). 이름·소속·이메일을 여기서 고치면 그 파일도 같이 고쳐야 합니다.
 };
