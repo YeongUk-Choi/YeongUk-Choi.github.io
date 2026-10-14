@@ -24,7 +24,6 @@ window.SITE.profile = {
     "assets/img/photo-street.jpg"
   ],
   photoInterval: 5000,                         // 사진 교대 간격 (ms)
-  bookingUrl: "",                              // Google 예약 페이지 / Calendly 링크 (비면 비활성 버튼) — E-18 대기
   calendarEmbedUrl: "",                        // Google Calendar 공개(바쁨/가능) 임베드 URL — E-19 대기
   orcid: "",                                   // 없음. 논문은 Google Scholar 기준 (scripts/fetch_scholar.py)
   scholarUrl: "https://scholar.google.com/citations?user=GAX2tHgAAAAJ&hl=en",

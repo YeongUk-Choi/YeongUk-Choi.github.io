@@ -21,10 +21,6 @@
     });
     document.querySelectorAll("[data-profile-hero]").forEach(n => { if (P.hero) n.innerHTML = esc(P.hero).replace(/—/g, "<br class=\"hero-br\">—"); });
     const pillDot = $(".pill .dot"); if (pillDot && !P.nowAvailable) pillDot.classList.add("off");
-    document.querySelectorAll("[data-book]").forEach(b => {
-      if (P.bookingUrl) { b.href = P.bookingUrl; b.target = "_blank"; b.rel = "noopener"; }
-      else { b.setAttribute("aria-disabled", "true"); b.title = "Booking link not set yet"; }
-    });
     document.querySelectorAll("[data-mail]").forEach(b => { if (P.email) b.href = "mailto:" + P.email; else b.style.display = "none"; });
     const y = $("[data-year]"); if (y) y.textContent = new Date().getFullYear();
     navMenu();
