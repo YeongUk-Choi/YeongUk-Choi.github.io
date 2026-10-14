@@ -13,6 +13,7 @@ window.SITE.measurements = [
     name: "Pulsed-laser deposition (PLD)",
     cond: "Nd:YAG · 266 nm",
     detail: "Epitaxial oxide, chalcogenide and intermetallic films — the 14 materials on the periodic-table page",
+    cvDetail: "Epitaxial oxide, chalcogenide and intermetallic thin films",   // CV에서는 사이트 안내 문구 대신 이 문장을 씁니다
     sample: "SrTiO₃ · TiO₂ · Al₂O₃ · Si substrates" },
   { featured: true, service: true, kind: "analysis",
     name: "Modeling & analysis",

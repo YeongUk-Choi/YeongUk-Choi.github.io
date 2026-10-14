@@ -1,0 +1,105 @@
+/* CV 전용 스타일. 사이트(어두운 톤)와 달리 종이에 인쇄되는 문서라 흰 바탕입니다.
+   A4 한 장 기준으로 잡되, 논문이 늘면 자연스럽게 두 장으로 넘어갑니다. */
+:root {
+  --ink: #16161a;
+  --ink-2: #44444c;
+  --ink-3: #74747e;
+  --rule: #d9d9e0;
+  --violet: #7c3aed;
+  --orange: #f97316;
+  --font: "SF Pro Text", -apple-system, BlinkMacSystemFont, Inter, "Helvetica Neue", "Apple SD Gothic Neo", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: #f2f2f5; color: var(--ink);
+  font-family: var(--font); font-size: 10.2pt; line-height: 1.4; letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; text-decoration: none; }
+
+/* 화면에서는 A4 종이 한 장처럼 보이게. 인쇄하면 이 틀은 사라집니다. */
+.page {
+  width: 210mm; min-height: 297mm; margin: 24px auto; padding: 16mm 16mm 14mm;
+  background: #fff; box-shadow: 0 18px 50px rgba(0,0,0,0.14);
+}
+
+/* ---------- 머리 ---------- */
+.head { display: flex; gap: 18px; align-items: flex-start; }
+.head-main { flex: 1; min-width: 0; }
+.name { font-size: 25pt; font-weight: 700; letter-spacing: -0.025em; line-height: 1.05; margin: 0; }
+.role { margin: 5px 0 0; font-size: 11pt; color: var(--ink-2); }
+.aff  { margin: 1px 0 0; font-size: 10pt; color: var(--ink-2); }
+.contact { margin: 9px 0 0; font-size: 9.4pt; color: var(--ink-3); display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.contact a { border-bottom: 1px solid var(--rule); }
+.head-photo { width: 26mm; height: 33mm; object-fit: cover; border-radius: 3px; background: #ececeF; }
+.rule { height: 2.5px; margin: 11px 0 0; border-radius: 2px;
+        background: linear-gradient(90deg, var(--violet), var(--orange)); }
+
+/* ---------- 섹션 ---------- */
+section { margin-top: 13px; break-inside: auto; }
+h2 {
+  margin: 0 0 7px; font-size: 8.6pt; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.12em; color: var(--violet);
+  border-bottom: 1px solid var(--rule); padding-bottom: 4px;
+  break-after: avoid;                    /* 제목만 앞 장 끝에 남지 않게 */
+}
+
+/* 왼쪽 연도 / 오른쪽 내용 */
+.row { display: grid; grid-template-columns: 30mm 1fr; gap: 10px; padding: 5px 0; break-inside: avoid; }
+.row + .row { border-top: 1px solid #f0f0f4; }
+.when { font-size: 9.2pt; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.what { min-width: 0; }
+.what b { font-weight: 650; }
+.what .sub { color: var(--ink-2); }
+.what .sub2 { color: var(--ink-3); font-size: 9.2pt; }
+.what .quote { color: var(--ink-2); font-size: 9.4pt; }
+
+/* ---------- 논문 ---------- */
+.pub { display: grid; grid-template-columns: 7mm 1fr; gap: 6px; padding: 3.4px 0; break-inside: avoid; }
+.pub + .pub { border-top: 1px solid #f0f0f4; }
+.pub-n { color: var(--ink-3); font-size: 9.2pt; font-variant-numeric: tabular-nums; text-align: right; padding-top: 0.5px; }
+.pub-t { font-weight: 620; }
+.pub-a { color: var(--ink-2); font-size: 9.2pt; margin-top: 1px; }
+.pub-a u { text-decoration: none; font-weight: 700; color: var(--ink); }
+.pub-r { color: var(--ink-3); font-size: 9.2pt; margin-top: 1px; }
+.pub-r b { color: var(--ink-2); font-weight: 600; font-style: italic; }
+.pub-r .doi { border-bottom: 1px solid var(--rule); }
+.sel { display: inline-block; margin-left: 6px; white-space: nowrap; font-size: 7.2pt; letter-spacing: 0.08em;
+       text-transform: uppercase; color: var(--orange); vertical-align: 1.5px; font-weight: 700; }
+
+/* ---------- 역량 ---------- */
+.skill { display: grid; grid-template-columns: 30mm 1fr; gap: 10px; padding: 4px 0; break-inside: avoid; }
+.skill + .skill { border-top: 1px solid #f0f0f4; }
+.skill .k { font-size: 9.2pt; color: var(--ink-3); }
+.skill .v { color: var(--ink-2); }
+.skill .v b { color: var(--ink); font-weight: 620; }
+
+.focus-line { font-weight: 650; }
+.focus-text { color: var(--ink-2); margin-top: 1px; }
+
+.foot { margin-top: 14px; padding-top: 7px; border-top: 1px solid var(--rule);
+        display: flex; justify-content: space-between; gap: 12px; font-size: 8.4pt; color: var(--ink-3); }
+
+/* 화면에만 보이는 안내 막대 (인쇄·PDF에는 안 나옴) */
+.bar {
+  position: sticky; top: 0; z-index: 5; background: #16161a; color: #f5f5f7;
+  font-size: 9.5pt; padding: 10px 16px; display: flex; gap: 14px; align-items: center; justify-content: center;
+}
+.bar a { border: 1px solid rgba(255,255,255,0.3); border-radius: 999px; padding: 4px 12px; }
+.bar a:hover { background: rgba(255,255,255,0.12); }
+
+@media print {
+  @page { size: A4; margin: 13mm 14mm; }
+  body { background: #fff; font-size: 9.5pt; line-height: 1.36; }   /* 두 장에 들어가도록 */
+  .page { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+  .bar { display: none; }
+  a { color: inherit; }
+}
+
+@media (max-width: 230mm) {
+  .page { width: auto; max-width: 210mm; min-height: 0; margin: 12px; padding: 20px 18px; }
+  .row, .skill { grid-template-columns: 1fr; gap: 1px; }
+  .head-photo { width: 22mm; height: 28mm; }
+  .name { font-size: 21pt; }
+}
