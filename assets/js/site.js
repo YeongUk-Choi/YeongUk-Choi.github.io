@@ -25,6 +25,7 @@
     const y = $("[data-year]"); if (y) y.textContent = new Date().getFullYear();
     navMenu();
     rotatePhotos();
+    qrSheet();
   }
 
   /* ---- phones: the link row is hidden, so "Menu" opens it as a panel. No JS → it still goes home. ---- */
@@ -215,6 +216,38 @@
     });
     const box = $("#cal-embed");
     if (P.calendarEmbedUrl) { const f = document.createElement("iframe"); f.src = P.calendarEmbedUrl; f.loading = "lazy"; box.innerHTML = ""; box.append(f); box.hidden = false; }
+  }
+
+  /* ---- QR sheet: for showing the card when there is no card. Without JS the link
+         still opens the QR image itself, so it is never a dead end. ---- */
+  function qrSheet() {
+    const links = [...document.querySelectorAll("[data-qr]")];
+    if (!links.length) return;
+    const host = (P.siteUrl || location.origin).replace(/^https?:\/\//, "").replace(/\/$/, "");
+    const sheet = el("div", "qr-sheet");
+    sheet.hidden = true;
+    sheet.setAttribute("role", "dialog");
+    sheet.setAttribute("aria-modal", "true");
+    sheet.setAttribute("aria-label", "QR code for " + host);
+    sheet.innerHTML = `<div class="qr-card">
+        <img src="${links[0].getAttribute("href")}" alt="QR code for ${esc(host)}" width="260" height="260">
+        <div class="qr-url">${esc(host)}</div>
+        <div class="qr-hint">Point a camera here</div>
+      </div>
+      <button class="qr-close" type="button" aria-label="Close">Close</button>`;
+    document.body.append(sheet);
+
+    const open = on => {
+      sheet.hidden = !on;
+      document.body.classList.toggle("no-scroll", on);
+      if (on) sheet.querySelector(".qr-close").focus();
+    };
+    links.forEach(a => a.addEventListener("click", e => { e.preventDefault(); open(true); }));
+    sheet.addEventListener("click", e => { if (!e.target.closest(".qr-card")) open(false); });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") open(false); });
+    // #qr opens it straight away — a bookmark that turns the phone into the card
+    const fromHash = () => { if (location.hash === "#qr") open(true); };
+    addEventListener("hashchange", fromHash); fromHash();
   }
 
   /* ---- focus: tiny markdown ---- */
