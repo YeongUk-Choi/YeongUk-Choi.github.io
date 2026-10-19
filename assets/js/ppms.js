@@ -277,7 +277,10 @@
      People are recorded as initials (C.Y.U), separated by commas when several worked on the
      same action — the page is public, so a full name does not belong in it. */
   const EQUIP = C.equipment || [];
-  let EV = [], ACT = [], evOffline = !C.apiUrl, evFilter = "all", evAll = false, evCur = null;
+  /* evOffline until the web app has been redeployed with the events code: the old script
+     answers an unknown action with "Wrong code", and five of those lock the cylinder
+     ledger for ten minutes. A page load must never be able to do that. */
+  let EV = [], ACT = [], evOffline = !C.apiUrl || !C.events, evFilter = "all", evAll = false, evCur = null;
   /* kept in memory for the visit only — typing the code again for every action is how a
      log stops being written. It is never stored. */
   let evCode = "";
@@ -315,7 +318,12 @@
   }
 
   async function loadEvents() {
-    if (evOffline) { [EV, ACT] = evLocal(); $("#ev-offline").hidden = false; return renderEvents(); }
+    if (evOffline) {
+      [EV, ACT] = evLocal();
+      const n = $("#ev-offline"); n.hidden = false;
+      if (C.apiUrl) n.innerHTML = "<b>Not writing to the sheet yet.</b> The web app has not been redeployed with the event log, so anything added here stays in this browser.";
+      return renderEvents();
+    }
     try {
       await evApi({ action: "events" });
     } catch (err) {

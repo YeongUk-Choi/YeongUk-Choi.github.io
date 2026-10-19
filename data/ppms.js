@@ -8,6 +8,11 @@ window.SITE.ppms = {
   // 끈 상태에서는 아래 statusUrl/logUrl(정적 파일)을 그대로 읽는다.
   // 2026-10-11 새 버전 배포 확인 후 켬 (?action=telemetry 가 ok:true 응답).
   telemetry: true,
+  // 서비스 이벤트 기록을 웹앱으로 보낼지. **Apps Script 를 새 버전으로 배포한 뒤에만 켠다.**
+  // 끈 상태에서는 브라우저 안에서만 도는 시연 모드로 뜬다(다른 기기에서는 안 보인다).
+  // 켜기 전에 켜면 안 되는 이유: 옛 스크립트는 모르는 action 을 "코드 틀림"으로 처리하고,
+  // 다섯 번 틀리면 헬륨 병 기록까지 10분간 잠긴다. 즉 방문자가 열기만 해도 잠길 수 있다.
+  events: false,
   statusUrl: "data/ppms-status.json",          // 최근값 한 덩어리
   logUrl: "data/ppms-log.csv",                 // ts,recon_temp_k,dewar_psi,heater_pct,ppms_temp_k,ppms_field_oe
   cylinder: "47 L",
