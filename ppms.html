@@ -55,6 +55,41 @@
   <div class="chart-host" id="chart-psi"></div>
 </figure>
 
+<section id="ev-section">
+<h2 class="sec">Events &amp; service log</h2>
+<p class="subtle ev-lede">One line per event. Open it to see what was wrong and every action taken, in order.</p>
+<div class="note-bar" id="ev-offline" hidden><b>Not connected to the sheet yet.</b> Events below are kept in this browser only, so you can try the buttons. They disappear on another device.</div>
+
+<div id="ev-list-view">
+  <div class="pgrid" id="ev-summary"></div>
+  <div class="ev-head">
+    <div class="ev-filter"><button class="btn small on" data-filter="all">All</button><button class="btn small" data-filter="open">Open</button><button class="btn small" data-filter="resolved">Resolved</button></div>
+    <button class="btn small primary" id="ev-new">+ New event</button>
+  </div>
+  <form class="ev-form" id="ev-new-form" hidden>
+    <div class="ev-row">
+      <select id="ev-f-equip" aria-label="Equipment"></select>
+      <input id="ev-f-equip-other" placeholder="equipment" aria-label="Equipment name" hidden>
+      <input id="ev-f-opened" type="datetime-local" aria-label="When it started">
+      <input id="ev-f-who" placeholder="initials — C.Y.U" aria-label="Your initials" autocomplete="off">
+    </div>
+    <input id="ev-f-title" placeholder="one-line title — what happened" aria-label="Title">
+    <textarea id="ev-f-issue" rows="3" placeholder="the issue: what you saw, what is wrong (optional)" aria-label="Issue"></textarea>
+    <label class="ev-check"><input type="checkbox" id="ev-f-readings" checked> attach the readings showing right now</label>
+    <div class="ev-row">
+      <input id="ev-f-code" type="password" placeholder="edit code" autocomplete="current-password" aria-label="Edit code">
+      <button class="btn primary" type="submit">Create event</button>
+      <button class="btn" type="button" id="ev-cancel">Cancel</button>
+    </div>
+  </form>
+  <div class="he-msg" id="ev-msg"></div>
+  <ul class="ev-list" id="ev-list"></ul>
+  <div class="ev-foot"><button class="btn small" id="ev-more" hidden></button><button class="btn small" id="ev-csv">Download all as CSV</button><span class="subtle ev-hint">Anyone can read · only the edit code can change</span></div>
+</div>
+
+<div id="ev-detail-view" hidden></div>
+</section>
+
 <h2 class="sec">Helium cylinders</h2>
 <div class="note-bar" id="he-offline" hidden><b>Not connected to the sheet yet.</b> Entries below are kept in this browser only, so you can try the buttons. They disappear on another device.</div>
 <div class="he-grid" id="he-stock"></div>
@@ -71,6 +106,7 @@
 <ul class="he-log" id="he-log"></ul>
 
 </div></main>
+<div id="ev-print" aria-hidden="true"></div>
 <footer><div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
   <span>© <span data-year></span> <span data-profile="name">UK</span> · <span data-profile-aff></span></span>
   <span class="subtle"><a class="qr-link" href="assets/img/qr-site.svg" data-qr>Show QR</a> · Static site · no tracking</span>

@@ -1,5 +1,5 @@
 /**
- * Helium cylinder inventory + cryostat telemetry — Apps Script web app behind ppms.html.
+ * Helium cylinder inventory + cryostat telemetry + work log — Apps Script web app behind ppms.html.
  *
  * The site is a static page on GitHub Pages: it cannot keep a secret and it cannot write a file.
  * This script is the one piece that can do both — it holds the edit code in Script Properties
@@ -13,6 +13,7 @@
  *     the collector's copy lives on a shared Windows machine: leaking it must not let anyone
  *     rewrite the cylinder ledger.
  *  4. Run the function `setup` once and accept the permission prompt. It writes the header rows.
+ *     Run it again after an update that adds a sheet — it only fills in what is missing.
  *  5. Deploy → New deployment → type "Web app".
  *       Execute as: Me          Who has access: Anyone
  *     Copy the /exec URL into data/ppms.js → apiUrl.
@@ -30,6 +31,14 @@ var TELEMETRY_MAX = 20000;        // ~2 weeks at one point per minute; trimmed f
 var TELEMETRY_TRIM = 2000;        // delete in blocks, deleting one row at a time is slow
 var PUSH_MAX_POINTS = 200;        // one backlog batch; bounds this execution's runtime
 var TELEMETRY_READ = 1440;        // points handed to the page: 24 h at one per minute
+/* Service events and the actions taken on them: two sheets, one row per thing, joined on
+   the event id. An event is the headline ("pressure stuck at 1.1 psi"); the actions are
+   what people did about it, each with its own time and initials. */
+var EVENTS = 'events';
+var EVENTS_HEADER = ['id', 'no', 'created', 'opened', 'closed', 'status', 'equipment',
+                     'title', 'issue', 'reporter', 'readings', 'outcome'];
+var ACTS = 'actions';
+var ACTS_HEADER = ['id', 'event', 'ts', 'who', 'what', 'result'];
 var SUPPLIERS = ['agas', 'ggas'];                 // must match data/ppms.js
 var ACTIONS = { delivery: [+1, 0], open: [-1, +1], ret: [0, -1] };   // [full, empty] per cylinder
 var MAX_QTY = 99;
@@ -40,6 +49,10 @@ function setup() {
   if (sh.getLastRow() === 0) sh.appendRow(HEADER);
   var tel = telemetrySheet();
   if (tel.getLastRow() === 0) tel.appendRow(TELEMETRY_HEADER);
+  var ev = eventSheet();
+  if (ev.getLastRow() === 0) ev.appendRow(EVENTS_HEADER);
+  var ac = actionSheet();
+  if (ac.getLastRow() === 0) ac.appendRow(ACTS_HEADER);
   return 'ready';
 }
 
@@ -52,6 +65,20 @@ function telemetrySheet() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(TELEMETRY);
   if (!sh) { sh = ss.insertSheet(TELEMETRY); sh.appendRow(TELEMETRY_HEADER); }
+  return sh;
+}
+
+function eventSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(EVENTS);
+  if (!sh) { sh = ss.insertSheet(EVENTS); sh.appendRow(EVENTS_HEADER); }
+  return sh;
+}
+
+function actionSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(ACTS);
+  if (!sh) { sh = ss.insertSheet(ACTS); sh.appendRow(ACTS_HEADER); }
   return sh;
 }
 
@@ -161,9 +188,25 @@ function telemetryRead(p) {
 function handle(p) {
   try {
     if (p.action === 'list' || !p.action) return json({ ok: true, events: readAll() });
+    /* Note the two meanings of "events" in this file: the cylinder ledger calls its rows
+       events (action=list), and the service log is action=events. Separate calls, separate sheets. */
+    if (p.action === 'events') return json(eventsRead());
     requireCode(p.code);
     var lock = LockService.getScriptLock(); lock.waitLock(10000);
     try {
+      /* Every event write answers with the whole log, so one round trip leaves the page
+         holding exactly what the sheet holds. */
+      if (p.action.indexOf('ev_') === 0 || p.action.indexOf('act_') === 0) {
+        if (p.action === 'ev_add') evAdd(p);
+        else if (p.action === 'ev_edit') evEdit(p);
+        else if (p.action === 'ev_close') evClose(p);
+        else if (p.action === 'ev_reopen') evReopen(p);
+        else if (p.action === 'ev_del') evDel(p.id);
+        else if (p.action === 'act_add') actAdd(p);
+        else if (p.action === 'act_del') actDel(p.id);
+        else throw new Error('Unknown action.');
+        return json(eventsRead());
+      }
       if (p.action === 'add') add(p);
       else if (p.action === 'undo') undo(p.id);
       else throw new Error('Unknown action.');
@@ -229,6 +272,141 @@ function totals(events) {
     s.full += a[0] * Number(e.qty); s.empty += a[1] * Number(e.qty);
   });
   return t;
+}
+
+/* ---- service events ----
+   `equipment` and `who` are stored as free text. The cylinder actions are validated because
+   they move a count; these are labels, and a list kept in two files drifts the first time
+   someone adds one on the page and not here. Initials, not names: the page is public. */
+
+var EV_MAX_TEXT = 2000, EV_MAX_LINE = 160, EV_MAX_ACTION = 600;
+
+function eventsRead() {
+  var ev = eventSheet().getDataRange().getValues();
+  var ac = actionSheet().getDataRange().getValues();
+  var events = ev.length < 2 ? [] : ev.slice(1).filter(function (r) { return r[0]; }).map(function (r) {
+    return { id: String(r[0]), no: String(r[1]), created: toIso(r[2]), opened: toIso(r[3]),
+             closed: r[4] === '' || r[4] == null ? '' : toIso(r[4]), status: String(r[5] || 'open'),
+             equipment: String(r[6] || ''), title: String(r[7] || ''), issue: String(r[8] || ''),
+             reporter: String(r[9] || ''), readings: String(r[10] || ''), outcome: String(r[11] || '') };
+  });
+  var actions = ac.length < 2 ? [] : ac.slice(1).filter(function (r) { return r[0]; }).map(function (r) {
+    return { id: String(r[0]), event: String(r[1]), ts: toIso(r[2]), who: String(r[3] || ''),
+             what: String(r[4] || ''), result: String(r[5] || '') };
+  });
+  return { ok: true, events: events, actions: actions, server_ts: new Date().toISOString() };
+}
+
+/* A date the browser sent. Anything unparseable is refused rather than quietly stored as
+   "now": an action logged at the wrong hour is worse than one the page made you re-enter. */
+function when(v, what) {
+  var d = new Date(String(v || ''));
+  if (isNaN(d.getTime())) throw new Error('Enter a valid ' + what + '.');
+  if (d.getTime() > Date.now() + 86400000) throw new Error('That ' + what + ' is in the future.');
+  return d;
+}
+
+function text(v, limit, what) {
+  var t = String(v == null ? '' : v).trim();
+  if (limit && t.length > limit) throw new Error(what + ' is too long (max ' + limit + ' characters).');
+  return t;
+}
+
+/* PPMS-<year>-<serial>. The serial counts only that year's rows, so it stays short and a
+   report number read off paper still finds its row. */
+function nextNo(sh, year) {
+  var v = sh.getDataRange().getValues(), prefix = 'PPMS-' + year + '-', n = 0;
+  for (var i = 1; i < v.length; i++) {
+    var no = String(v[i][1] || '');
+    if (no.indexOf(prefix) === 0) {
+      var k = parseInt(no.slice(prefix.length), 10);
+      if (k > n) n = k;
+    }
+  }
+  n += 1;
+  return prefix + (n < 10 ? '00' : n < 100 ? '0' : '') + n;
+}
+
+function evRow(sh, id) {
+  var v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) if (String(v[i][0]) === String(id)) return { row: i + 1, v: v[i] };
+  return null;
+}
+
+function evAdd(p) {
+  var opened = when(p.opened, 'start time');
+  var title = text(p.title, EV_MAX_LINE, 'Title');
+  if (!title) throw new Error('Give the event a title.');
+  var equipment = text(p.equipment, EV_MAX_LINE, 'Equipment');
+  if (!equipment) throw new Error('Pick the equipment.');
+  var reporter = text(p.reporter, EV_MAX_LINE, 'Initials');
+  if (!reporter) throw new Error('Enter the initials of whoever is reporting this.');
+  var sh = eventSheet();
+  if (sh.getLastRow() === 0) sh.appendRow(EVENTS_HEADER);
+  sh.appendRow([Utilities.getUuid().slice(0, 8), nextNo(sh, opened.getFullYear()), new Date(),
+                opened, '', 'open', equipment, title, text(p.issue, EV_MAX_TEXT, 'Issue'),
+                reporter, text(p.readings, 400, 'Readings'), '']);
+}
+
+function evEdit(p) {
+  var sh = eventSheet(), hit = evRow(sh, p.id);
+  if (!hit) throw new Error('That event is already gone.');
+  /* Only the fields the form sent are touched, so editing the title cannot blank the issue. */
+  if (p.opened != null && p.opened !== '') sh.getRange(hit.row, 4).setValue(when(p.opened, 'start time'));
+  if (p.equipment != null) sh.getRange(hit.row, 7).setValue(text(p.equipment, EV_MAX_LINE, 'Equipment'));
+  if (p.title != null) sh.getRange(hit.row, 8).setValue(text(p.title, EV_MAX_LINE, 'Title'));
+  if (p.issue != null) sh.getRange(hit.row, 9).setValue(text(p.issue, EV_MAX_TEXT, 'Issue'));
+  if (p.reporter != null) sh.getRange(hit.row, 10).setValue(text(p.reporter, EV_MAX_LINE, 'Initials'));
+  if (p.outcome != null) sh.getRange(hit.row, 12).setValue(text(p.outcome, EV_MAX_TEXT, 'Outcome'));
+}
+
+function evClose(p) {
+  var sh = eventSheet(), hit = evRow(sh, p.id);
+  if (!hit) throw new Error('That event is already gone.');
+  var closed = String(p.closed || '') ? when(p.closed, 'end time') : new Date();
+  var opened = new Date(toIso(hit.v[3]));
+  if (closed.getTime() < opened.getTime()) throw new Error('The event cannot close before it started.');
+  sh.getRange(hit.row, 5).setValue(closed);
+  sh.getRange(hit.row, 6).setValue('resolved');
+  if (p.outcome != null) sh.getRange(hit.row, 12).setValue(text(p.outcome, EV_MAX_TEXT, 'Outcome'));
+}
+
+function evReopen(p) {
+  var sh = eventSheet(), hit = evRow(sh, p.id);
+  if (!hit) throw new Error('That event is already gone.');
+  sh.getRange(hit.row, 5).setValue('');
+  sh.getRange(hit.row, 6).setValue('open');
+}
+
+/* Deleting an event takes its actions with it — an orphan action belongs to nothing and
+   would never be seen again, but would still be counted. */
+function evDel(id) {
+  id = String(id || '');
+  var sh = eventSheet(), hit = evRow(sh, id);
+  if (!hit) throw new Error('That event is already gone.');
+  sh.deleteRow(hit.row);
+  var ash = actionSheet(), v = ash.getDataRange().getValues();
+  for (var i = v.length - 1; i >= 1; i--) if (String(v[i][1]) === id) ash.deleteRow(i + 1);
+}
+
+function actAdd(p) {
+  var sh = eventSheet();
+  if (!evRow(sh, p.event)) throw new Error('That event is already gone.');
+  var what = text(p.what, EV_MAX_ACTION, 'Action');
+  if (!what) throw new Error('Write what was done.');
+  var who = text(p.who, EV_MAX_LINE, 'Initials');
+  if (!who) throw new Error('Enter the initials of whoever did it.');
+  var ash = actionSheet();
+  if (ash.getLastRow() === 0) ash.appendRow(ACTS_HEADER);
+  ash.appendRow([Utilities.getUuid().slice(0, 8), String(p.event), when(p.ts, 'time'), who,
+                 what, text(p.result, EV_MAX_ACTION, 'Result')]);
+}
+
+function actDel(id) {
+  id = String(id || '');
+  var sh = actionSheet(), v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) if (String(v[i][0]) === id) { sh.deleteRow(i + 1); return; }
+  throw new Error('That line is already gone.');
 }
 
 function json(o) {

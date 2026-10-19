@@ -16,6 +16,19 @@ window.SITE.ppms = {
     { id: "ggas", name: "G gas" }
   ],
   lowStock: 2,                                 // 새 병이 이 수 이하이면 경고
+  // 서비스 이벤트(Events & service log)에서 고를 수 있는 장비. 2026-10-19 UK 지시로 신설.
+  // 여기만 고치면 목록이 바뀐다 — 서버(Apps Script)는 장비명을 검사하지 않으므로 한쪽만 고쳐도 깨지지 않는다.
+  // id "other" 는 화면에서 직접 입력 칸으로 바뀐다.
+  equipment: [
+    { id: "recondenser", label: "He recondenser" },
+    { id: "compressor",  label: "He compressor" },
+    { id: "reliquefier", label: "He reliquefier" },
+    { id: "chiller",     label: "He chiller" },
+    { id: "ppms",        label: "PPMS" },
+    { id: "other",       label: "Other (type it in)" }
+  ],
+  // 보고서 머리말에 찍히는 소속. PDF 서식에만 쓴다.
+  reportOrg: "Department of Physics, Inha University · QFML & NMPL",
   limits: {
     staleMin: 15,                              // 이 분(分) 넘게 갱신 없으면 "stale"
     pressureSetpoint: 0.45,                    // HRC 듀어 압력 설정값 (psi)

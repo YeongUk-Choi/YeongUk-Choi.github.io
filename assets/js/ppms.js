@@ -272,8 +272,399 @@
     });
   }
 
+  /* ---------- service events ----------
+     Two levels: a list of one-line events, and one event with the actions taken on it.
+     People are recorded as initials (C.Y.U), separated by commas when several worked on the
+     same action — the page is public, so a full name does not belong in it. */
+  const EQUIP = C.equipment || [];
+  let EV = [], ACT = [], evOffline = !C.apiUrl, evFilter = "all", evAll = false, evCur = null;
+  /* kept in memory for the visit only — typing the code again for every action is how a
+     log stops being written. It is never stored. */
+  let evCode = "";
+  const EV_PAGE = 12;
+
+  const pad = n => String(n).padStart(2, "0");
+  const toInput = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const fmtDay = d => `${MON[d.getMonth()]} ${d.getDate()}`;
+  const fmtDT = d => `${MON[d.getMonth()]} ${d.getDate()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const isoDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const isoDT = d => `${isoDay(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  /* days and hours, never "0.3 d": a service report is read by someone deciding whether to
+     call the vendor, and 7 h means something to them that 0.3 d does not */
+  function dur(ms) {
+    if (ms == null || ms < 0) return "—";
+    const m = Math.round(ms / 6e4), h = Math.floor(m / 60), d = Math.floor(h / 24);
+    if (d >= 1) return `${d} d ${h % 24} h`;
+    if (h >= 1) return `${h} h ${m % 60} m`;
+    return `${m} m`;
+  }
+  const evActs = id => ACT.filter(a => a.event === id).sort((x, y) => new Date(x.ts) - new Date(y.ts));
+  const evSorted = () => EV.slice().sort((a, b) => new Date(b.opened) - new Date(a.opened));
+  const elapsed = e => (e.closed ? new Date(e.closed) : new Date()) - new Date(e.opened);
+  const evMsg = (t, bad) => { const m = $("#ev-msg"); if (m) { m.textContent = t; m.className = "he-msg" + (bad ? " bad" : " good"); } };
+
+  const evLocal = () => { try { const j = JSON.parse(localStorage.getItem("ppms-events-demo")) || {}; return [j.events || [], j.actions || []]; } catch (e) { return [[], []]; } };
+  const evSaveLocal = () => localStorage.setItem("ppms-events-demo", JSON.stringify({ events: EV, actions: ACT }));
+  const uid = () => "L" + Math.random().toString(36).slice(2, 9);
+
+  async function evApi(params) {
+    if (evOffline) return null;
+    const j = await api(params);
+    EV = j.events || []; ACT = j.actions || [];
+    return j;
+  }
+
+  async function loadEvents() {
+    if (evOffline) { [EV, ACT] = evLocal(); $("#ev-offline").hidden = false; return renderEvents(); }
+    try {
+      await evApi({ action: "events" });
+    } catch (err) {
+      /* The sheet is reachable but has not been given the new script yet. Say that plainly
+         rather than showing an empty log that looks like "no events ever happened". */
+      evOffline = true; [EV, ACT] = evLocal();
+      const n = $("#ev-offline");
+      n.hidden = false;
+      if (/unknown action/i.test(err.message)) n.innerHTML = "<b>The sheet has not been updated for events yet.</b> Until the Apps Script is redeployed, anything you add here stays in this browser only.";
+    }
+    renderEvents();
+  }
+
+  /* ---- list ---- */
+  function renderSummary() {
+    const box = $("#ev-summary"); box.innerHTML = "";
+    const open = EV.filter(e => e.status !== "resolved");
+    const cut = Date.now() - 90 * 864e5;
+    const recent = EV.filter(e => +new Date(e.opened) >= cut);
+    const spent = recent.reduce((t, e) => t + elapsed(e), 0);
+    const longest = recent.length ? Math.max(...recent.map(elapsed)) : null;
+    const oldest = open.length ? Math.max(...open.map(e => Date.now() - new Date(e.opened))) : null;
+    const last = EV.length ? Math.min(...EV.map(e => Date.now() - new Date(e.opened))) : null;
+    box.append(
+      card("Open now", open.length, open.length === 1 ? "event" : "events",
+        open.length ? "warn" : "ok", open.length ? "needs work" : "all clear",
+        oldest == null ? "nothing open" : `oldest open ${esc(dur(oldest))}`),
+      card("Events · 90 days", recent.length, "", null, "",
+        `${recent.filter(e => e.status === "resolved").length} resolved · ${recent.filter(e => e.status !== "resolved").length} open`),
+      card("Service time · 90 days", recent.length ? dur(spent) : null, "", null, "",
+        longest == null ? "" : `longest single event ${esc(dur(longest))}`),
+      card("Last event", last == null ? null : dur(last), last == null ? "" : "ago", null, "",
+        EV.length ? esc(evSorted()[0].title.slice(0, 48)) : "nothing logged yet")
+    );
+  }
+
+  function renderEvents() {
+    if (evCur) return renderDetail(evCur);
+    $("#ev-list-view").hidden = false; $("#ev-detail-view").hidden = true;
+    renderSummary();
+    const list = $("#ev-list"); list.innerHTML = "";
+    let rows = evSorted();
+    if (evFilter === "open") rows = rows.filter(e => e.status !== "resolved");
+    if (evFilter === "resolved") rows = rows.filter(e => e.status === "resolved");
+    const more = $("#ev-more");
+    more.hidden = rows.length <= EV_PAGE;
+    more.textContent = evAll ? "Show fewer" : `Show all ${rows.length}`;
+    if (!evAll) rows = rows.slice(0, EV_PAGE);
+    if (!rows.length) { list.append(el("li", "subtle", EV.length ? "Nothing in this filter." : "No events logged yet.")); return; }
+    rows.forEach(e => {
+      const open = e.status !== "resolved", n = evActs(e.id).length;
+      const li = el("li", open ? "is-open" : "");
+      li.dataset.id = e.id; li.tabIndex = 0; li.setAttribute("role", "button");
+      li.innerHTML = `<span class="d">${esc(fmtDay(new Date(e.opened)))}</span>
+        <span>${chip(open ? "warn" : "ok", open ? "open" : "resolved")}</span>
+        <span class="t">${esc(e.title)}<small>${esc(e.equipment)}${e.issue ? " · " + esc(e.issue.split("\n")[0].slice(0, 88)) : ""}</small></span>
+        <span class="w">${esc(e.reporter)}</span>
+        <span class="n">${n} action${n === 1 ? "" : "s"}</span><span class="chev">›</span>`;
+      list.append(li);
+    });
+  }
+
+  /* ---- one event ---- */
+  function renderDetail(id) {
+    const e = EV.find(x => x.id === id);
+    if (!e) { evCur = null; location.hash = ""; return renderEvents(); }
+    $("#ev-list-view").hidden = true;
+    const box = $("#ev-detail-view"); box.hidden = false;
+    const open = e.status !== "resolved", acts = evActs(e.id);
+    let r = {}; try { r = JSON.parse(e.readings || "{}"); } catch (err) { r = {}; }
+
+    box.innerHTML = `
+      <a class="ev-back" id="ev-back">‹ All events</a>
+      <div class="ev-title">${esc(e.title)} ${chip(open ? "warn" : "ok", open ? "open" : "resolved")}</div>
+      <div class="ev-meta"><b>${esc(e.no || "—")}</b> · ${esc(e.equipment)} · opened <b>${esc(fmtDT(new Date(e.opened)))}</b>
+        by <b>${esc(e.reporter)}</b> · ${open ? "running" : "took"} <b>${esc(dur(elapsed(e)))}</b>${e.closed ? ` · closed ${esc(fmtDT(new Date(e.closed)))}` : ""}</div>
+      <div class="ev-ops">
+        ${open ? `<button class="btn small primary" id="ev-resolve">Mark resolved</button>` : `<button class="btn small" id="ev-reopen">Reopen</button>`}
+        <button class="btn small" id="ev-pdf">Download PDF</button>
+        <button class="btn small" id="ev-edit">Edit</button>
+        <button class="btn small" id="ev-delete">Delete</button>
+      </div>
+      <form class="ev-form" id="ev-resolve-form" hidden>
+        <textarea id="ev-r-outcome" rows="3" placeholder="outcome — what it turned out to be, and what state the kit is in now"></textarea>
+        <div class="ev-row"><input id="ev-r-closed" type="datetime-local" aria-label="When it ended">
+          <input id="ev-r-code" type="password" placeholder="edit code" autocomplete="current-password">
+          <button class="btn primary" type="submit">Close event</button></div>
+      </form>
+      <form class="ev-form" id="ev-edit-form" hidden>
+        <div class="ev-row"><select id="ev-e-equip"></select><input id="ev-e-equip-other" placeholder="equipment" hidden>
+          <input id="ev-e-opened" type="datetime-local"><input id="ev-e-who" placeholder="initials"></div>
+        <input id="ev-e-title" placeholder="title">
+        <textarea id="ev-e-issue" rows="3" placeholder="the issue"></textarea>
+        <textarea id="ev-e-outcome" rows="2" placeholder="outcome"></textarea>
+        <div class="ev-row"><input id="ev-e-code" type="password" placeholder="edit code" autocomplete="current-password">
+          <button class="btn primary" type="submit">Save</button></div>
+      </form>
+      <div class="he-msg" id="ev-dmsg"></div>
+      <div class="ev-box"><h3>Issue</h3><p>${e.issue ? esc(e.issue) : "<span class=\"subtle\">Nothing written yet — use Edit to add it.</span>"}</p>
+        ${r.at ? `<div class="ev-read">
+          ${r.psi != null ? `<div><b>${esc((+r.psi).toFixed(3))} psi</b>dewar · setpoint ${esc(L.pressureSetpoint)}</div>` : ""}
+          ${r.heater_w != null ? `<div><b>${esc((+r.heater_w).toFixed(2))} W</b>HRC heater</div>` : ""}
+          ${r.temp_k != null ? `<div><b>${esc((+r.temp_k).toFixed(2))} K</b>cold tip</div>` : ""}
+          <div><b>${esc(fmtDT(new Date(r.at)))}</b>reading attached</div></div>` : ""}</div>
+      ${e.outcome ? `<div class="ev-box"><h3>Outcome</h3><p>${esc(e.outcome)}</p></div>` : ""}
+      <h2 class="sec">Actions · ${acts.length}</h2>
+      <ul class="tl" id="ev-tl"></ul>
+      <form class="ev-form" id="ev-act-form">
+        <div class="ev-row"><input id="ev-a-ts" type="datetime-local" aria-label="When">
+          <input id="ev-a-who" placeholder="initials — C.Y.U, J.D.W" aria-label="Who did it" autocomplete="off"></div>
+        <input id="ev-a-what" placeholder="what was done" aria-label="Action">
+        <input id="ev-a-result" placeholder="result (optional)" aria-label="Result">
+        <div class="ev-row"><input id="ev-a-code" type="password" placeholder="edit code" autocomplete="current-password">
+          <button class="btn primary" type="submit">Add action</button></div>
+      </form>
+      <div class="subtle ev-hint">Every action keeps its own time and initials. The PDF is built from exactly these lines.</div>`;
+
+    const tl = $("#ev-tl");
+    if (!acts.length) tl.append(el("li", "subtle", "No action recorded yet."));
+    acts.forEach((a, i) => {
+      const li = el("li", i === acts.length - 1 ? "last" : "");
+      li.innerHTML = `<button class="del" data-act="${esc(a.id)}">delete</button>
+        <span class="when">${esc(fmtDT(new Date(a.ts)))}</span><span class="who">${esc(a.who)}</span>
+        <div class="what">${esc(a.what)}</div>${a.result ? `<div class="res">→ ${esc(a.result)}</div>` : ""}`;
+      tl.append(li);
+    });
+    wireDetail(e);
+  }
+
+  function fillEquip(sel, other, value) {
+    sel.innerHTML = "";
+    EQUIP.forEach(q => sel.append(new Option(q.label, q.id)));
+    const known = EQUIP.find(q => q.label === value);
+    if (value && !known) { sel.value = "other"; other.hidden = false; other.value = value; }
+    else if (known) sel.value = known.id;
+    sel.onchange = () => { other.hidden = sel.value !== "other"; if (!other.hidden) other.focus(); };
+    other.hidden = sel.value !== "other";
+  }
+  const equipValue = (sel, other) => sel.value === "other" ? other.value.trim() : (EQUIP.find(q => q.id === sel.value) || {}).label || "";
+
+  function wireDetail(e) {
+    const dmsg = (t, bad) => { const m = $("#ev-dmsg"); m.textContent = t; m.className = "he-msg" + (bad ? " bad" : " good"); };
+    $("#ev-back").onclick = () => { location.hash = ""; };
+    $("#ev-a-ts").value = toInput(new Date());
+    document.querySelectorAll("#ev-detail-view input[type=password]").forEach(i => i.value = evCode);
+    $("#ev-pdf").onclick = () => printReport(e);
+
+    const run = async (params, local, ok) => {
+      try {
+        if (evOffline) { local(); evSaveLocal(); } else { await evApi(params); evCode = params.code || evCode; }
+        renderEvents(); if (ok) dmsg(ok, false);
+      } catch (err) { dmsg(err.message, true); }
+    };
+
+    $("#ev-act-form").onsubmit = async ev => {
+      ev.preventDefault();
+      const ts = $("#ev-a-ts").value, who = $("#ev-a-who").value.trim(), what = $("#ev-a-what").value.trim();
+      const result = $("#ev-a-result").value.trim(), code = $("#ev-a-code").value.trim();
+      if (!what) return dmsg("Write what was done.", true);
+      if (!who) return dmsg("Enter initials — C.Y.U", true);
+      if (!evOffline && !code) return dmsg("Enter the edit code.", true);
+      await run({ action: "act_add", event: e.id, ts: new Date(ts).toISOString(), who, what, result, code },
+        () => ACT.push({ id: uid(), event: e.id, ts: new Date(ts).toISOString(), who, what, result }));
+    };
+
+    $("#ev-tl").onclick = async ev => {
+      const b = ev.target.closest(".del"); if (!b) return;
+      if (!confirm("Remove this action?")) return;
+      const code = $("#ev-a-code").value.trim();
+      await run({ action: "act_del", id: b.dataset.act, code }, () => { ACT = ACT.filter(a => a.id !== b.dataset.act); });
+    };
+
+    if ($("#ev-resolve")) {
+      $("#ev-resolve").onclick = () => { const f = $("#ev-resolve-form"); f.hidden = !f.hidden; $("#ev-r-closed").value = toInput(new Date()); };
+      $("#ev-resolve-form").onsubmit = async ev => {
+        ev.preventDefault();
+        const closed = new Date($("#ev-r-closed").value).toISOString(), outcome = $("#ev-r-outcome").value.trim();
+        const code = $("#ev-r-code").value.trim();
+        if (!evOffline && !code) return dmsg("Enter the edit code.", true);
+        await run({ action: "ev_close", id: e.id, closed, outcome, code },
+          () => { e.closed = closed; e.status = "resolved"; e.outcome = outcome; }, "Closed.");
+      };
+    }
+    if ($("#ev-reopen")) $("#ev-reopen").onclick = async () => {
+      if (!confirm("Reopen this event?")) return;
+      await run({ action: "ev_reopen", id: e.id, code: prompt("Edit code") || "" },
+        () => { e.closed = ""; e.status = "open"; });
+    };
+
+    $("#ev-edit").onclick = () => {
+      const f = $("#ev-edit-form"); f.hidden = !f.hidden;
+      if (f.hidden) return;
+      fillEquip($("#ev-e-equip"), $("#ev-e-equip-other"), e.equipment);
+      $("#ev-e-opened").value = toInput(new Date(e.opened));
+      $("#ev-e-who").value = e.reporter; $("#ev-e-title").value = e.title;
+      $("#ev-e-issue").value = e.issue; $("#ev-e-outcome").value = e.outcome || "";
+    };
+    $("#ev-edit-form").onsubmit = async ev => {
+      ev.preventDefault();
+      const p = { action: "ev_edit", id: e.id, equipment: equipValue($("#ev-e-equip"), $("#ev-e-equip-other")),
+        opened: new Date($("#ev-e-opened").value).toISOString(), reporter: $("#ev-e-who").value.trim(),
+        title: $("#ev-e-title").value.trim(), issue: $("#ev-e-issue").value.trim(),
+        outcome: $("#ev-e-outcome").value.trim(), code: $("#ev-e-code").value.trim() };
+      if (!p.title) return dmsg("Give the event a title.", true);
+      if (!evOffline && !p.code) return dmsg("Enter the edit code.", true);
+      await run(p, () => Object.assign(e, p), "Saved.");
+    };
+
+    $("#ev-delete").onclick = async () => {
+      if (!confirm("Delete this event and all of its actions? This cannot be undone.")) return;
+      const code = evOffline ? "" : (prompt("Edit code") || "");
+      try {
+        if (evOffline) { EV = EV.filter(x => x.id !== e.id); ACT = ACT.filter(a => a.event !== e.id); evSaveLocal(); }
+        else await evApi({ action: "ev_del", id: e.id, code });
+        evCur = null; location.hash = ""; renderEvents(); evMsg("Deleted.", false);
+      } catch (err) { dmsg(err.message, true); }
+    };
+  }
+
+  /* ---- the printed report ----
+     Built from the stored record each time, so it can never disagree with what is on screen. */
+  function printReport(e) {
+    const acts = evActs(e.id), open = e.status !== "resolved";
+    const people = [...new Set([e.reporter, ...acts.map(a => a.who)]
+      .flatMap(w => String(w || "").split(",").map(x => x.trim())).filter(Boolean))];
+    let r = {}; try { r = JSON.parse(e.readings || "{}"); } catch (err) { r = {}; }
+    const row = (k, v) => `<div class="k">${esc(k)}</div><div>${v}</div>`;
+    const now = new Date();
+    $("#ev-print").innerHTML = `
+      <div class="rp-hd"><h1>Equipment Service Report</h1>
+        <div class="rp-org"><b>PPMS &amp; Helium Recondenser</b><br>${esc(C.reportOrg || "")}</div></div>
+      <div class="rp-meta">
+        ${row("Report No.", esc(e.no || "—"))}${row("Status", open ? "Open" : "Resolved")}
+        ${row("Equipment", esc(e.equipment))}${row("Reported by", esc(e.reporter))}
+        ${row("Opened", esc(isoDT(new Date(e.opened))))}${row("Closed", e.closed ? esc(isoDT(new Date(e.closed))) : "—")}
+        ${row("Elapsed", esc(dur(elapsed(e))) + (open ? " (still open)" : ""))}${row("People", esc(people.join(", "))) }
+      </div>
+      <h2>1. Issue</h2>
+      <p class="rp-body">${esc(e.issue || "—")}</p>
+      ${r.at ? `<div class="rp-read">
+        ${r.psi != null ? `<div><b>${esc((+r.psi).toFixed(3))} psi</b>dewar pressure · setpoint ${esc(L.pressureSetpoint)}</div>` : ""}
+        ${r.heater_w != null ? `<div><b>${esc((+r.heater_w).toFixed(2))} W</b>HRC heater</div>` : ""}
+        ${r.temp_k != null ? `<div><b>${esc((+r.temp_k).toFixed(2))} K</b>cold tip</div>` : ""}
+        <div><b>${esc(isoDT(new Date(r.at)))}</b>reading attached</div></div>` : ""}
+      <h2>2. Actions taken</h2>
+      ${acts.length ? `<table><tr><th class="n">#</th><th class="t">Date &amp; time</th><th class="p">Person</th><th>Action</th><th>Result</th></tr>
+        ${acts.map((a, i) => `<tr><td class="n">${i + 1}</td><td class="t">${esc(isoDT(new Date(a.ts)).slice(5))}</td>
+          <td class="p">${esc(a.who)}</td><td>${esc(a.what)}</td><td>${esc(a.result || "")}</td></tr>`).join("")}
+        </table>` : `<p class="rp-body">No action has been recorded for this event.</p>`}
+      <h2>3. Outcome</h2>
+      <p class="rp-body">${esc(e.outcome || (open ? "Still open at the time this report was printed." : "—"))}</p>
+      <div class="rp-sign"><div>Recorded by — ${esc(e.reporter)}</div><div>Checked by</div><div>Date</div></div>
+      <div class="rp-ft"><span>Generated ${esc(isoDT(now))} from ${esc(location.host + location.pathname)}</span>
+        <span>${esc(e.no || "")}</span></div>`;
+    /* browsers name the saved PDF after the document title, so the file arrives as the report number */
+    const title = document.title;
+    document.title = (e.no || "service-report") + " " + e.title.slice(0, 60);
+    const restore = () => { document.title = title; removeEventListener("afterprint", restore); };
+    addEventListener("afterprint", restore);
+    setTimeout(restore, 60000);
+    print();
+  }
+
+  function evCsv() {
+    const q = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+    const head = ["report_no", "status", "equipment", "title", "opened", "closed", "elapsed", "reported_by",
+                  "action_no", "action_time", "action_by", "action", "result", "outcome"];
+    const lines = [head.join(",")];
+    evSorted().forEach(e => {
+      const base = [e.no, e.status, e.equipment, e.title, isoDT(new Date(e.opened)),
+                    e.closed ? isoDT(new Date(e.closed)) : "", dur(elapsed(e)), e.reporter];
+      const acts = evActs(e.id);
+      if (!acts.length) lines.push(base.concat(["", "", "", "", "", e.outcome]).map(q).join(","));
+      acts.forEach((a, i) => lines.push(base.concat([i + 1, isoDT(new Date(a.ts)), a.who, a.what, a.result, i === acts.length - 1 ? e.outcome : ""]).map(q).join(",")));
+    });
+    /* BOM first, or Excel on Windows reads the Korean text as mojibake */
+    const url = URL.createObjectURL(new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }));
+    const a = el("a"); a.href = url; a.download = `ppms-events-${isoDay(new Date())}.csv`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function evRoute() {
+    const m = /^#event\/(.+)$/.exec(location.hash);
+    evCur = m ? m[1] : null;
+    renderEvents();
+    if (evCur) $("#ev-section").scrollIntoView({ block: "start" });
+  }
+
+  function wireEvents() {
+    fillEquip($("#ev-f-equip"), $("#ev-f-equip-other"), "");
+    const openRow = li => { if (li) location.hash = "event/" + li.dataset.id; };
+    $("#ev-list").addEventListener("click", ev => openRow(ev.target.closest("li[data-id]")));
+    $("#ev-list").addEventListener("keydown", ev => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const li = ev.target.closest("li[data-id]"); if (!li) return;
+      ev.preventDefault(); openRow(li);
+    });
+    document.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => {
+      evFilter = b.dataset.filter; evAll = false;
+      document.querySelectorAll("[data-filter]").forEach(x => x.classList.toggle("on", x === b));
+      renderEvents();
+    });
+    $("#ev-more").onclick = () => { evAll = !evAll; renderEvents(); };
+    $("#ev-csv").onclick = evCsv;
+    $("#ev-new").onclick = () => {
+      const f = $("#ev-new-form"); f.hidden = !f.hidden;
+      if (!f.hidden) { $("#ev-f-opened").value = toInput(new Date()); $("#ev-f-title").focus(); }
+    };
+    $("#ev-cancel").onclick = () => { $("#ev-new-form").hidden = true; };
+    $("#ev-new-form").onsubmit = async ev => {
+      ev.preventDefault();
+      const equipment = equipValue($("#ev-f-equip"), $("#ev-f-equip-other"));
+      const title = $("#ev-f-title").value.trim(), reporter = $("#ev-f-who").value.trim();
+      const issue = $("#ev-f-issue").value.trim(), code = $("#ev-f-code").value.trim();
+      const opened = new Date($("#ev-f-opened").value || Date.now()).toISOString();
+      if (!equipment) return evMsg("Pick the equipment.", true);
+      if (!title) return evMsg("Give the event a title.", true);
+      if (!reporter) return evMsg("Enter initials — C.Y.U", true);
+      if (!evOffline && !code) return evMsg("Enter the edit code.", true);
+      /* the live readings are copied in at creation, because by the time the event is written
+         up the instrument has usually moved on and the number that mattered is gone */
+      let readings = "";
+      if ($("#ev-f-readings").checked && TEL && TEL.latest) {
+        const l = TEL.latest, r = { at: l.seen || new Date().toISOString() };
+        if (l.psi) r.psi = l.psi.v;
+        if (l.temp_k) r.temp_k = l.temp_k.v;
+        if (l.heater_w) r.heater_w = l.heater_w.v;
+        if (r.psi != null || r.temp_k != null) readings = JSON.stringify(r);
+      }
+      try {
+        if (evOffline) {
+          EV.push({ id: uid(), no: `PPMS-${new Date(opened).getFullYear()}-LOCAL`, created: new Date().toISOString(),
+                    opened, closed: "", status: "open", equipment, title, issue, reporter, readings, outcome: "" });
+          evSaveLocal();
+        } else { await evApi({ action: "ev_add", opened, equipment, title, issue, reporter, readings, code }); evCode = code; }
+        $("#ev-new-form").hidden = true;
+        ["ev-f-title", "ev-f-issue", "ev-f-equip-other"].forEach(k => $("#" + k).value = "");
+        /* straight into the new event: the next thing anyone wants to write is the first action */
+        const fresh = EV.slice().sort((a, b) => new Date(b.created) - new Date(a.created))[0];
+        renderEvents(); evMsg("Event created.", false);
+        if (fresh) location.hash = "event/" + fresh.id;
+      } catch (err) { evMsg(err.message, true); }
+    };
+    addEventListener("hashchange", evRoute);
+  }
+
   document.addEventListener("DOMContentLoaded", async () => {
     wireInventory(); loadInventory();
+    wireEvents(); loadEvents().then(evRoute);
     await renderStatus();          /* fills TEL, which loadLog reads */
     await loadLog(); drawTrends();
     document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => { win = +b.dataset.win; drawTrends(); });
