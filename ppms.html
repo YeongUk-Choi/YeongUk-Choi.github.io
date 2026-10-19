@@ -70,15 +70,22 @@
     <div class="ev-row">
       <select id="ev-f-equip" aria-label="Equipment"></select>
       <input id="ev-f-equip-other" placeholder="equipment" aria-label="Equipment name" hidden>
-      <input id="ev-f-opened" type="datetime-local" aria-label="When it started">
       <input id="ev-f-who" placeholder="initials — C.Y.U" aria-label="Your initials" autocomplete="off">
+    </div>
+    <div class="ev-when">
+      <label for="ev-f-opened">From</label><input id="ev-f-opened" type="datetime-local">
+      <label for="ev-f-closed">To</label><input id="ev-f-closed" type="datetime-local">
+      <span class="subtle ev-note">leave <b>To</b> empty while it is still going on</span>
     </div>
     <input id="ev-f-title" placeholder="one-line title — what happened" aria-label="Title">
     <textarea id="ev-f-issue" rows="3" placeholder="the issue: what you saw, what is wrong (optional)" aria-label="Issue"></textarea>
     <label class="ev-check"><input type="checkbox" id="ev-f-readings" checked> attach the readings showing right now</label>
+    <div class="ev-acts-head"><span>Actions, in order</span><button type="button" class="btn small" id="ev-f-addact">+ Add line</button></div>
+    <div id="ev-f-acts"></div>
+    <textarea id="ev-f-outcome" rows="2" placeholder="outcome — what it turned out to be (only if it is finished)" aria-label="Outcome"></textarea>
     <div class="ev-row">
       <input id="ev-f-code" type="password" placeholder="edit code" autocomplete="current-password" aria-label="Edit code">
-      <button class="btn primary" type="submit">Create event</button>
+      <button class="btn primary" type="submit" id="ev-f-save">Save event</button>
       <button class="btn" type="button" id="ev-cancel">Cancel</button>
     </div>
   </form>

@@ -320,6 +320,7 @@
       };
       b.onclick = () => {
         const d = new Date(inp.value); if (!inp.value || isNaN(d)) return;
+        inp.dataset.touched = "1";
         d.setHours(d.getHours() + (d.getHours() < 12 ? 12 : -12));
         inp.value = toInput(d); label();
       };
@@ -496,7 +497,12 @@
     const dmsg = (t, bad) => { const m = $("#ev-dmsg"); m.textContent = t; m.className = "he-msg" + (bad ? " bad" : " good"); };
     $("#ev-back").onclick = () => { location.hash = ""; };
     wireAmPm($("#ev-detail-view"));
-    setWhen($("#ev-a-ts"), new Date());
+    /* Writing up an old event should not mean re-typing its date on every line: when the
+       event is more than a day behind, the next action starts where the last one ended. */
+    const acts = evActs(e.id), last = acts[acts.length - 1];
+    const tail = new Date(Math.max(+new Date(e.opened), last ? +new Date(last.ts) : 0));
+    setWhen($("#ev-a-ts"), Date.now() - tail > 864e5 ? tail : new Date());
+    $("#ev-a-who").value = (last && last.who) || e.reporter || "";
     document.querySelectorAll("#ev-detail-view input[type=password]").forEach(i => i.value = evCode);
     $("#ev-pdf").onclick = () => printReport(e);
 
@@ -644,8 +650,52 @@
     if (evCur) $("#ev-section").scrollIntoView({ block: "start" });
   }
 
+  /* One writing pass: the event and the actions that make it up go in together, because
+     "it ran from here to here and we did these three things" is one thought, not five forms. */
+  function actRow(prefill) {
+    const row = el("div", "ev-arow");
+    row.innerHTML = `<input type="datetime-local" class="a-when" aria-label="When">
+      <input class="a-who" placeholder="C.Y.U" aria-label="Initials" autocomplete="off">
+      <input class="a-what" placeholder="what was done" aria-label="Action">
+      <input class="a-result" placeholder="result (optional)" aria-label="Result">
+      <button type="button" class="a-del" title="Remove this line">×</button>`;
+    row.querySelector(".a-who").value = prefill.who || "";
+    if (prefill.when) row.querySelector(".a-when").value = toInput(prefill.when);
+    row.querySelector(".a-del").onclick = () => { row.remove(); if (!$("#ev-f-acts").children.length) addActRow(); };
+    /* a time the person actually set is never moved again by the From field */
+    row.querySelector(".a-when").addEventListener("change", e => e.target.dataset.touched = "1");
+    $("#ev-f-acts").append(row);
+    wireAmPm(row);
+    return row;
+  }
+  /* each new line starts where the last one left off — a service call is a sequence, and
+     re-typing today's date on every line is what stops people writing the log */
+  function addActRow() {
+    const rows = [...$("#ev-f-acts").querySelectorAll(".ev-arow")];
+    const last = rows[rows.length - 1];
+    const lastWhen = last && last.querySelector(".a-when").value;
+    const start = $("#ev-f-opened").value;
+    const base = lastWhen || start;
+    const row = actRow({ who: (last && last.querySelector(".a-who").value) || $("#ev-f-who").value,
+                         when: base ? new Date(base) : new Date() });
+    row.querySelector(".a-what").focus();
+    return row;
+  }
+  const readActRows = () => [...$("#ev-f-acts").querySelectorAll(".ev-arow")]
+    .map(r => ({ ts: r.querySelector(".a-when").value, who: r.querySelector(".a-who").value.trim(),
+                 what: r.querySelector(".a-what").value.trim(), result: r.querySelector(".a-result").value.trim() }))
+    .filter(a => a.what)
+    .sort((x, y) => new Date(x.ts) - new Date(y.ts));
+
   function wireEvents() {
     fillEquip($("#ev-f-equip"), $("#ev-f-equip-other"), "");
+    $("#ev-f-addact").onclick = () => addActRow();
+    /* Change "From" and the untouched action lines follow it. Writing up last Tuesday should
+       not mean correcting today's date on every line. */
+    $("#ev-f-opened").addEventListener("change", () => {
+      const d = new Date($("#ev-f-opened").value); if (isNaN(d)) return;
+      $("#ev-f-acts").querySelectorAll(".a-when").forEach(i => { if (!i.dataset.touched) setWhen(i, d); });
+    });
     const openRow = li => { if (li) location.hash = "event/" + li.dataset.id; };
     $("#ev-list").addEventListener("click", ev => openRow(ev.target.closest("li[data-id]")));
     $("#ev-list").addEventListener("keydown", ev => {
@@ -662,7 +712,13 @@
     $("#ev-csv").onclick = evCsv;
     $("#ev-new").onclick = () => {
       const f = $("#ev-new-form"); f.hidden = !f.hidden;
-      if (!f.hidden) { wireAmPm(f); setWhen($("#ev-f-opened"), new Date()); $("#ev-f-title").focus(); }
+      if (!f.hidden) {
+        wireAmPm(f);
+        setWhen($("#ev-f-opened"), new Date());
+        $("#ev-f-closed").value = ""; $("#ev-f-closed").dispatchEvent(new Event("input"));
+        $("#ev-f-acts").innerHTML = ""; addActRow();
+        $("#ev-f-title").focus();
+      }
     };
     $("#ev-cancel").onclick = () => { $("#ev-new-form").hidden = true; };
     $("#ev-new-form").onsubmit = async ev => {
@@ -670,10 +726,17 @@
       const equipment = equipValue($("#ev-f-equip"), $("#ev-f-equip-other"));
       const title = $("#ev-f-title").value.trim(), reporter = $("#ev-f-who").value.trim();
       const issue = $("#ev-f-issue").value.trim(), code = $("#ev-f-code").value.trim();
-      const opened = new Date($("#ev-f-opened").value || Date.now()).toISOString();
+      const outcome = $("#ev-f-outcome").value.trim();
+      const opened = new Date($("#ev-f-opened").value || Date.now());
+      const closedRaw = $("#ev-f-closed").value;
+      const closed = closedRaw ? new Date(closedRaw) : null;
+      const acts = readActRows();
       if (!equipment) return evMsg("Pick the equipment.", true);
       if (!title) return evMsg("Give the event a title.", true);
       if (!reporter) return evMsg("Enter initials — C.Y.U", true);
+      if (closed && closed < opened) return evMsg("The end time is before the start time.", true);
+      const early = acts.find(a => !a.ts || isNaN(new Date(a.ts)));
+      if (early) return evMsg("One of the action lines has no time.", true);
       if (!evOffline && !code) return evMsg("Enter the edit code.", true);
       /* the live readings are copied in at creation, because by the time the event is written
          up the instrument has usually moved on and the number that mattered is gone */
@@ -685,19 +748,44 @@
         if (l.heater_w) r.heater_w = l.heater_w.v;
         if (r.psi != null || r.temp_k != null) readings = JSON.stringify(r);
       }
+      const btn = $("#ev-f-save"); btn.disabled = true;
+      const steps = 1 + acts.length + (closed ? 1 : 0);
+      let done = 0, id = null;
+      const step = () => evMsg(`Saving… ${++done} of ${steps}`, false);
       try {
         if (evOffline) {
-          EV.push({ id: uid(), no: `PPMS-${new Date(opened).getFullYear()}-LOCAL`, created: new Date().toISOString(),
-                    opened, closed: "", status: "open", equipment, title, issue, reporter, readings, outcome: "" });
-          evSaveLocal();
-        } else { await evApi({ action: "ev_add", opened, equipment, title, issue, reporter, readings, code }); evCode = code; }
+          id = uid();
+          EV.push({ id, no: `PPMS-${opened.getFullYear()}-LOCAL`, created: new Date().toISOString(),
+                    opened: opened.toISOString(), closed: closed ? closed.toISOString() : "",
+                    status: closed ? "resolved" : "open", equipment, title, issue, reporter, readings, outcome });
+          acts.forEach(a => ACT.push({ id: uid(), event: id, ts: new Date(a.ts).toISOString(),
+                                       who: a.who || reporter, what: a.what, result: a.result }));
+          evSaveLocal(); done = steps;
+        } else {
+          await evApi({ action: "ev_add", opened: opened.toISOString(), equipment, title, issue,
+                        reporter, readings, code });
+          evCode = code; step();
+          /* the id the server just minted: newest created row */
+          id = EV.slice().sort((a, b) => new Date(b.created) - new Date(a.created))[0].id;
+          for (const a of acts) {
+            await evApi({ action: "act_add", event: id, ts: new Date(a.ts).toISOString(),
+                          who: a.who || reporter, what: a.what, result: a.result, code });
+            step();
+          }
+          if (closed) { await evApi({ action: "ev_close", id, closed: closed.toISOString(), outcome, code }); step(); }
+          else if (outcome) await evApi({ action: "ev_edit", id, outcome, code });
+        }
         $("#ev-new-form").hidden = true;
-        ["ev-f-title", "ev-f-issue", "ev-f-equip-other"].forEach(k => $("#" + k).value = "");
-        /* straight into the new event: the next thing anyone wants to write is the first action */
-        const fresh = EV.slice().sort((a, b) => new Date(b.created) - new Date(a.created))[0];
-        renderEvents(); evMsg("Event created.", false);
-        if (fresh) location.hash = "event/" + fresh.id;
-      } catch (err) { evMsg(err.message, true); }
+        ["ev-f-title", "ev-f-issue", "ev-f-outcome", "ev-f-equip-other"].forEach(k => $("#" + k).value = "");
+        $("#ev-f-acts").innerHTML = "";
+        renderEvents();
+        evMsg(acts.length ? `Saved — ${acts.length} action${acts.length === 1 ? "" : "s"}.` : "Saved.", false);
+        if (id) location.hash = "event/" + id;
+      } catch (err) {
+        /* a half-written event is still better than a lost one: say what landed and open it */
+        evMsg(id ? `${err.message} — the event was created, ${done - 1} of ${acts.length} actions saved. Open it and add the rest.` : err.message, true);
+        if (id) location.hash = "event/" + id;
+      } finally { btn.disabled = false; }
     };
     addEventListener("hashchange", evRoute);
   }
