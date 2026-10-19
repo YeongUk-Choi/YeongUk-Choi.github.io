@@ -12,7 +12,8 @@ window.SITE.ppms = {
   // 끈 상태에서는 브라우저 안에서만 도는 시연 모드로 뜬다(다른 기기에서는 안 보인다).
   // 켜기 전에 켜면 안 되는 이유: 옛 스크립트는 모르는 action 을 "코드 틀림"으로 처리하고,
   // 다섯 번 틀리면 헬륨 병 기록까지 10분간 잠긴다. 즉 방문자가 열기만 해도 잠길 수 있다.
-  events: false,
+  // 2026-10-19 재배포 확인 후 켬 (?action=events 가 ok:true 응답).
+  events: true,
   statusUrl: "data/ppms-status.json",          // 최근값 한 덩어리
   logUrl: "data/ppms-log.csv",                 // ts,recon_temp_k,dewar_psi,heater_pct,ppms_temp_k,ppms_field_oe
   cylinder: "47 L",
