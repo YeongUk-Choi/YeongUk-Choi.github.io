@@ -301,6 +301,34 @@
     if (h >= 1) return `${h} h ${m % 60} m`;
     return `${m} m`;
   }
+  /* The native datetime field will not flip 오전/오후 on a click — only on an arrow key —
+     so each one gets a button beside it that shifts the value by twelve hours. */
+  /* always through here: the AM/PM button's label is driven by the input event */
+  const setWhen = (inp, d) => { inp.value = toInput(d); inp.dispatchEvent(new Event("input")); };
+
+  function wireAmPm(root) {
+    (root || document).querySelectorAll("input[type=datetime-local]").forEach(inp => {
+      if (inp.dataset.ampm) return;
+      inp.dataset.ampm = "1";
+      const b = el("button", "ampm"); b.type = "button";
+      b.title = "Switch morning / afternoon";
+      const label = () => {
+        const d = new Date(inp.value);
+        const ok = inp.value && !isNaN(d);
+        b.textContent = !ok ? "AM/PM" : d.getHours() < 12 ? "AM" : "PM";
+        b.disabled = !ok;
+      };
+      b.onclick = () => {
+        const d = new Date(inp.value); if (!inp.value || isNaN(d)) return;
+        d.setHours(d.getHours() + (d.getHours() < 12 ? 12 : -12));
+        inp.value = toInput(d); label();
+      };
+      inp.addEventListener("input", label);
+      inp.insertAdjacentElement("afterend", b);
+      label();
+    });
+  }
+
   const evActs = id => ACT.filter(a => a.event === id).sort((x, y) => new Date(x.ts) - new Date(y.ts));
   const evSorted = () => EV.slice().sort((a, b) => new Date(b.opened) - new Date(a.opened));
   const elapsed = e => (e.closed ? new Date(e.closed) : new Date()) - new Date(e.opened);
@@ -467,7 +495,8 @@
   function wireDetail(e) {
     const dmsg = (t, bad) => { const m = $("#ev-dmsg"); m.textContent = t; m.className = "he-msg" + (bad ? " bad" : " good"); };
     $("#ev-back").onclick = () => { location.hash = ""; };
-    $("#ev-a-ts").value = toInput(new Date());
+    wireAmPm($("#ev-detail-view"));
+    setWhen($("#ev-a-ts"), new Date());
     document.querySelectorAll("#ev-detail-view input[type=password]").forEach(i => i.value = evCode);
     $("#ev-pdf").onclick = () => printReport(e);
 
@@ -497,7 +526,10 @@
     };
 
     if ($("#ev-resolve")) {
-      $("#ev-resolve").onclick = () => { const f = $("#ev-resolve-form"); f.hidden = !f.hidden; $("#ev-r-closed").value = toInput(new Date()); };
+      $("#ev-resolve").onclick = () => {
+        const f = $("#ev-resolve-form"); f.hidden = !f.hidden;
+        setWhen($("#ev-r-closed"), new Date());
+      };
       $("#ev-resolve-form").onsubmit = async ev => {
         ev.preventDefault();
         const closed = new Date($("#ev-r-closed").value).toISOString(), outcome = $("#ev-r-outcome").value.trim();
@@ -517,7 +549,7 @@
       const f = $("#ev-edit-form"); f.hidden = !f.hidden;
       if (f.hidden) return;
       fillEquip($("#ev-e-equip"), $("#ev-e-equip-other"), e.equipment);
-      $("#ev-e-opened").value = toInput(new Date(e.opened));
+      setWhen($("#ev-e-opened"), new Date(e.opened));
       $("#ev-e-who").value = e.reporter; $("#ev-e-title").value = e.title;
       $("#ev-e-issue").value = e.issue; $("#ev-e-outcome").value = e.outcome || "";
     };
@@ -630,7 +662,7 @@
     $("#ev-csv").onclick = evCsv;
     $("#ev-new").onclick = () => {
       const f = $("#ev-new-form"); f.hidden = !f.hidden;
-      if (!f.hidden) { $("#ev-f-opened").value = toInput(new Date()); $("#ev-f-title").focus(); }
+      if (!f.hidden) { wireAmPm(f); setWhen($("#ev-f-opened"), new Date()); $("#ev-f-title").focus(); }
     };
     $("#ev-cancel").onclick = () => { $("#ev-new-form").hidden = true; };
     $("#ev-new-form").onsubmit = async ev => {
