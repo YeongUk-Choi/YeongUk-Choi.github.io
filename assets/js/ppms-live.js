@@ -10,10 +10,10 @@
      Age is measured against the server's receipt time, not the lab PC clock — a PC
      whose clock drifted must still look stale. The visitor's clock is not trusted
      either, so one offset is measured per response. */
-  let SKEW = 0, inflight = null;
-  async function fetchTel() {
+  let SKEW = 0; const inflight = {};
+  async function fetchTel(hours) {
     try {
-      const r = await fetch(C.apiUrl + "?action=telemetry", { cache: "no-store" });
+      const r = await fetch(C.apiUrl + "?action=telemetry" + (hours ? "&hours=" + hours : ""), { cache: "no-store" });
       if (!r.ok) return null;
       const d = await r.json();
       if (!d || !d.ok) return null;
@@ -24,11 +24,15 @@
   /* Gated by config: an Apps Script that has not been redeployed yet counts an unknown
      action as a wrong edit code, and five page views would lock the inventory for ten
      minutes. The flag is flipped after the new version is deployed, not before. */
-  function load() {
+  /* `hours` asks the web app for a window instead of its default last-1440-rows; the chart
+     needs it for 7 and 30 days. Requests are deduplicated per window, not cached — the
+     caller decides what is worth keeping. */
+  function load(hours) {
     if (!C.apiUrl || !C.telemetry) return Promise.resolve(null);
-    if (inflight) return inflight;                       /* two callers, one request */
-    inflight = fetchTel().finally(() => { inflight = null; });
-    return inflight;
+    const k = hours || 0;
+    if (inflight[k]) return inflight[k];                 /* two callers, one request */
+    inflight[k] = fetchTel(hours).finally(() => { delete inflight[k]; });
+    return inflight[k];
   }
 
   const seen = m => (m && m.ts) ? new Date(m.ts).getTime() + SKEW : null;

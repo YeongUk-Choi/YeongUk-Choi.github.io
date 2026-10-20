@@ -96,12 +96,14 @@
 
   /* ---------- trend charts ---------- */
   let LOG = [];
+  const mapPts = pts => pts.map(p => ({ t: new Date(p[0]), recon_temp_k: p[1], dewar_psi: p[2], heater_w: p[3] }))
+                           .filter(o => o.t && !isNaN(o.t));
   async function loadLog() {
     /* Points come from the same telemetry call renderStatus already made: one request,
        not two, and the chart can never disagree with the cards above it. */
     if (TEL && TEL.points && TEL.points.length) {
-      LOG = TEL.points.map(p => ({ t: new Date(p[0]), recon_temp_k: p[1], dewar_psi: p[2], heater_w: p[3] }))
-                      .filter(o => o.t && !isNaN(o.t));
+      LOG = mapPts(TEL.points);
+      WIN[24] = LOG; WMETA[24] = { stride: TEL.stride || 1, oldest: TEL.oldest };
       return;
     }
     try {
@@ -159,9 +161,52 @@
   }
 
   let win = 24;
+  /* One fetch per window, kept for the visit. The web app only returns its last day unless
+     asked for a range, which is why 7 and 30 days used to redraw the same 24 hours. */
+  const WIN = {}, WMETA = {};
+  async function ensureWindow(h) {
+    if (WIN[h]) return true;
+    if (!C.apiUrl || !C.telemetry) { WIN[h] = LOG; return true; }   /* static file: this is all there is */
+    const d = await Live.load(h);
+    if (!d || !d.points || !d.points.length) return false;          /* a failed read is not cached */
+    WIN[h] = mapPts(d.points); WMETA[h] = { stride: d.stride || 1, oldest: d.oldest };
+    return true;
+  }
+
+  const chartMsg = text => ["#chart-temp", "#chart-psi"].forEach(sel => {
+    $(sel).innerHTML = ""; $(sel).append(el("p", "subtle", text));
+  });
+
+  async function showWindow(h) {
+    win = h;
+    document.querySelectorAll("[data-win]").forEach(b => b.classList.toggle("on", +b.dataset.win === win));
+    if (WIN[h]) return drawTrends();
+    chartMsg("Reading the log\u2026");
+    $("#trend-note").textContent = "";
+    /* a window that could not be read shows nothing rather than the previous window's
+       curve relabelled, which would be a chart that lies about its own axis */
+    if (await ensureWindow(h)) drawTrends();
+    else { chartMsg("Could not read the log for this window. Tap the button again to retry."); }
+  }
+
+  /* What the chart is actually showing: how far back the log goes, and how much it was
+     thinned. A 30-day button on a log that keeps two weeks must not imply thirty days. */
+  function trendNote(rows) {
+    const note = $("#trend-note");
+    if (!note) return;
+    if (!rows.length) { note.textContent = ""; return; }
+    const m = WMETA[win] || {}, span = (Date.now() - +rows[0].t) / 864e5;
+    const res = (m.stride || 1) > 1 ? ` · one point per ${m.stride} min` : "";
+    const days = Math.round(span);
+    const short = win / 24 - span > 0.5
+      ? ` · the log only goes back ${span < 1 ? "less than a day" : days + (days === 1 ? " day" : " days")}` : "";
+    note.textContent = `${fmtDay(rows[0].t)} → ${fmtDay(rows[rows.length - 1].t)}${res}${short}`;
+  }
+
   function drawTrends() {
     const cut = Date.now() - win * 36e5;
-    const rows = LOG.filter(r => +r.t >= cut);
+    const rows = (WIN[win] || []).filter(r => +r.t >= cut);
+    trendNote(rows);
     /* null is a gap the instrument did not fill; +null is 0 and would draw a cold tip at
        absolute zero, so missing points are dropped rather than coerced. */
     const series = key => rows.map(r => ({ t: r.t, v: r[key] == null || r[key] === "" ? NaN : +r[key] }))
@@ -793,9 +838,12 @@
   document.addEventListener("DOMContentLoaded", async () => {
     wireInventory(); loadInventory();
     wireEvents(); loadEvents().then(evRoute);
-    await renderStatus();          /* fills TEL, which loadLog reads */
-    await loadLog(); drawTrends();
-    document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => { win = +b.dataset.win; drawTrends(); });
+    /* wired before the first fetch: the window buttons used to be dead for the few seconds
+       the telemetry call takes, which reads as "the button does nothing" */
+    document.querySelectorAll("[data-win]").forEach(b => b.onclick = () => showWindow(+b.dataset.win));
     addEventListener("resize", () => { clearTimeout(window._pr); window._pr = setTimeout(drawTrends, 150); });
+    await renderStatus();          /* fills TEL, which loadLog reads */
+    await loadLog();
+    if (win === 24) drawTrends();  /* a window picked while loading wins over the default */
   });
 })();

@@ -321,7 +321,8 @@ h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: 0.14em; col
 .st.ok   { color: var(--green); background: rgba(52,211,153,0.12);  border: 1px solid rgba(52,211,153,0.35); }
 .st.warn { color: var(--orange); background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.35); }
 .st.crit { color: var(--red); background: rgba(248,113,113,0.12);   border: 1px solid rgba(248,113,113,0.38); }
-.winbar { display: flex; gap: 8px; margin: 0 0 12px; }
+.winbar { display: flex; gap: 8px; margin: 0 0 6px; }
+.trend-note { font-size: 12.5px; margin: 0 0 12px; min-height: 16px; }
 .winbar .btn.on { background: var(--fg); color: #0a0a0c; border-color: transparent; }
 .chart-fig { margin: 0 0 18px; padding: 16px 16px 8px; border-radius: var(--radius-sm); background: var(--glass); border: 1px solid var(--line); }
 .chart-fig figcaption { font-size: 14px; font-weight: 600; margin-bottom: 4px; }

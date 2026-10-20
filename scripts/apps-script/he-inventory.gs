@@ -27,10 +27,12 @@ var TELEMETRY = 'telemetry';
 /* pc_ts is the lab PC's clock and may be wrong; server_ts is this server's and is what the
    page ages a reading against. A monitor whose clock drifted must still look stale. */
 var TELEMETRY_HEADER = ['pc_ts', 'server_ts', 'temp_k', 'psi', 'heater_w', 'scm', 'hrc', 'src'];
-var TELEMETRY_MAX = 20000;        // ~2 weeks at one point per minute; trimmed from the top
+var TELEMETRY_MAX = 45000;        // ~31 days at one point per minute; trimmed from the top
 var TELEMETRY_TRIM = 2000;        // delete in blocks, deleting one row at a time is slow
 var PUSH_MAX_POINTS = 200;        // one backlog batch; bounds this execution's runtime
-var TELEMETRY_READ = 1440;        // points handed to the page: 24 h at one per minute
+var TELEMETRY_READ = 1440;        // points handed to the page by default: 24 h at one per minute
+var TELEMETRY_MAX_OUT = 4000;     // ceiling for a long window; beyond this the range is thinned
+var TELEMETRY_MAX_HOURS = 24 * 60;
 /* Service events and the actions taken on them: two sheets, one row per thing, joined on
    the event id. An event is the headline ("pressure stuck at 1.1 psi"); the actions are
    what people did about it, each with its own time and initials. */
@@ -160,19 +162,38 @@ function requirePushCode(code) {
 /* Read side is public, like the inventory list: a fridge temperature is not a secret, and a
    key in page JavaScript would not be one either. */
 function telemetryRead(p) {
-  var want = Math.min(Number(p.points) || TELEMETRY_READ, TELEMETRY_READ);
   var sh = telemetrySheet(), last = sh.getLastRow();
   if (last < 2) return { ok: true, points: [], latest: {}, server_ts: new Date().toISOString() };
-  var first = Math.max(2, last - want + 1);
-  var v = sh.getRange(first, 1, last - first + 1, TELEMETRY_HEADER.length).getValues();
-  var points = [], latest = {}, i, r;
+
+  /* `hours` is the window the chart is drawing. Without it the page could only ever see the
+     last 1440 rows, which is why its 7-day and 30-day buttons drew the same day twice. */
+  var hours = Math.min(Number(p.hours) || 0, TELEMETRY_MAX_HOURS);
+  var cap = Math.min(Number(p.points) || (hours ? TELEMETRY_MAX_OUT : TELEMETRY_READ),
+                     hours ? TELEMETRY_MAX_OUT : TELEMETRY_READ);
+  var oldest = stamp(sh.getRange(2, 2).getValue());
+  var first;
+  if (hours) {
+    /* rows are appended in time order, so the start of the window is a binary search over
+       one column rather than a read of the whole sheet */
+    first = firstRowAtOrAfter(sh, last, Date.now() - hours * 3600000);
+  } else {
+    first = Math.max(2, last - cap + 1);
+  }
+  var rows = last - first + 1;
+  if (rows < 1) return { ok: true, points: [], latest: {}, oldest: oldest, stride: 1,
+                         server_ts: new Date().toISOString() };
+  /* One point per stride. The 24 h view stays at full resolution; a fortnight is thinned to
+     about one point every five minutes, which still shows a spike but is a tenth the bytes. */
+  var stride = Math.max(1, Math.ceil(rows / cap));
+  var v = sh.getRange(first, 1, rows, TELEMETRY_HEADER.length).getValues();
+  var points = [], latest = {}, i, r, ts;
   for (i = 0; i < v.length; i++) {
     r = v[i];
-    var ts = toIso(r[1]);
-    points.push([ts, r[2] === '' ? null : Number(r[2]), r[3] === '' ? null : Number(r[3]),
-                 r[4] === '' ? null : Number(r[4])]);
-    /* Each metric keeps its own last-seen time. SCM10 and HRC are read over different links
-       and fail independently; one freshness number for both would hide a half-dead monitor. */
+    ts = toIso(r[1]);
+    /* Every row updates "latest" even when it is not plotted — the cards above the chart
+       must show the real last reading, not the last one that survived thinning.
+       Each metric keeps its own last-seen time: SCM10 and HRC are read over different links
+       and fail independently, and one freshness number for both would hide a half-dead monitor. */
     if (r[2] !== '') latest.temp_k = { v: Number(r[2]), ts: ts, pc_ts: String(r[0]) };
     if (r[3] !== '') latest.psi = { v: Number(r[3]), ts: ts, pc_ts: String(r[0]) };
     if (r[4] !== '') latest.heater_w = { v: Number(r[4]), ts: ts, pc_ts: String(r[0]) };
@@ -180,9 +201,29 @@ function telemetryRead(p) {
     latest.scm = String(r[5] || '');
     latest.hrc = String(r[6] || '');
     latest.src = String(r[7] || '');
+    /* the last row is always plotted, so the right edge of the chart is the real last reading */
+    if (stride > 1 && i % stride !== 0 && i !== v.length - 1) continue;
+    points.push([ts, r[2] === '' ? null : Number(r[2]), r[3] === '' ? null : Number(r[3]),
+                 r[4] === '' ? null : Number(r[4])]);
   }
   return { ok: true, fields: ['ts', 'temp_k', 'psi', 'heater_w'], points: points,
-           latest: latest, server_ts: new Date().toISOString() };
+           latest: latest, oldest: oldest, stride: stride, kept: last - 1,
+           server_ts: new Date().toISOString() };
+}
+
+function stamp(v) { return v ? toIso(v) : ''; }
+
+/* First data row whose server_ts is at or after `ms`. Rows are appended in order, so a
+   binary search over the timestamp column beats reading every row. */
+function firstRowAtOrAfter(sh, last, ms) {
+  var lo = 2, hi = last, at = last + 1;
+  while (lo <= hi) {
+    var mid = Math.floor((lo + hi) / 2);
+    var v = sh.getRange(mid, 2).getValue();
+    var t = (v instanceof Date) ? v.getTime() : new Date(String(v)).getTime();
+    if (isNaN(t) || t < ms) { lo = mid + 1; } else { at = mid; hi = mid - 1; }
+  }
+  return Math.min(at, last);
 }
 
 function handle(p) {
