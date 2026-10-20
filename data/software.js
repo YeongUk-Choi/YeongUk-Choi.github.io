@@ -12,6 +12,8 @@
 //     license:  "MIT",                             // 없으면 생략 → "ask before reuse" 로 뜬다
 //     caveat:   "어디까지 검증했는지",                // 주황 줄로 받기 버튼 위에 뜬다
 //     cite:     "YeongUk Choi, ... (2026)",        // 논문에 쓸 때 인용할 문장 (선택)
+//     icon:     "assets/img/software/<slug>-icon.svg", // 앱 아이콘 (그림 위 왼쪽)
+//     sub:      "Command line · powder XRD",        // 이름 아래 한 줄
 //     image:    "assets/img/software/<slug>.jpg",   // 왼쪽 대표 그림 (프로그램 화면)
 //     imageNote:"그림 아래 한 줄 설명",
 //     features: [ "개조식 한 줄", "또 한 줄" ],      // 오른쪽 기능 목록
@@ -28,6 +30,8 @@ window.SITE.software = {
       name: "Rietveld Auto",
       tagline: "A Rietveld refinement engine built to be driven \u2014 by you, or by an AI agent reading its diagnostics.",
       kind: "script",
+      sub: "Command line \u00b7 powder X-ray diffraction",
+      icon: "assets/img/software/rietveld-auto-icon.svg",
       status: "released",
       version: "0.1.0", date: "2026-10-20", license: "MIT",
       image: "assets/img/software/rietveld-auto.jpg",
