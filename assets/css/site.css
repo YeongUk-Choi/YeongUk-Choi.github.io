@@ -305,7 +305,8 @@ footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--fg-3);
 /* ---------- Mobile ---------- */
 
 /* ---------- Software page ---------- */
-.sw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; margin-top: 26px; }
+/* a lone card should not stretch the width of a desktop screen */
+.sw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 560px)); gap: 14px; margin-top: 26px; }
 .sw-grid > * { min-width: 0; }
 .sw-card { padding: 22px 24px; border-radius: var(--radius-sm); background: var(--glass); border: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 8px; }
@@ -315,6 +316,9 @@ footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--fg-3);
 .sw-tag { margin: 0; font-size: 14.5px; color: var(--fg-2); }
 .sw-what { margin: 0; font-size: 14px; color: var(--fg-3); line-height: 1.5; }
 .sw-needs, .sw-cite { margin: 0; font-size: 12.5px; color: var(--fg-3); }
+/* the honest line: what the tool has and has not been tested against, before the download button */
+.sw-caveat { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--fg-2);
+  border-left: 2px solid var(--orange); padding-left: 10px; }
 .sw-needs b, .sw-cite b { color: var(--fg-2); font-weight: 600; margin-right: 5px; }
 .sw-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .sw-meta { margin-left: auto; font-size: 12px; }

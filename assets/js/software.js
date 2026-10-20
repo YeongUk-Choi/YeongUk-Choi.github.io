@@ -21,6 +21,7 @@
       ${it.tagline ? `<p class="sw-tag">${esc(it.tagline)}</p>` : ""}
       ${it.what ? `<p class="sw-what">${esc(it.what)}</p>` : ""}
       ${it.needs ? `<p class="sw-needs"><b>Needs</b> ${esc(it.needs)}</p>` : ""}
+      ${it.caveat ? `<p class="sw-caveat">${esc(it.caveat)}</p>` : ""}
       ${it.cite ? `<p class="sw-cite"><b>If it helps a paper</b> ${esc(it.cite)}</p>` : ""}
       <div class="sw-foot">${links || (prep ? '<span class="subtle">not downloadable yet</span>' : "")}
         ${meta ? `<span class="subtle sw-meta">${meta}</span>` : ""}</div>
