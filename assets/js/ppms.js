@@ -726,11 +726,46 @@
     row.querySelector(".a-what").focus();
     return row;
   }
+  /* The readings that belong on a report are the ones from when it happened, not from when
+     somebody got round to typing it up. For a live event that is the current reading; for a
+     write-up it is the logged point nearest the start time. */
+  const READ_NEAR_MIN = 20;
+  async function readingsAt(when) {
+    const age = Date.now() - when;
+    if (age < 10 * 6e4) {
+      const l = (TEL && TEL.latest) || {};
+      if (!(l.psi || l.temp_k)) return "";
+      const r = { at: l.seen || new Date().toISOString() };
+      if (l.psi) r.psi = l.psi.v;
+      if (l.temp_k) r.temp_k = l.temp_k.v;
+      if (l.heater_w) r.heater_w = l.heater_w.v;
+      return JSON.stringify(r);
+    }
+    const hours = Math.min(Math.ceil(age / 36e5) + 1, 24 * 60);
+    const d = await Live.load(hours);
+    if (!d || !d.points || !d.points.length) return "";
+    let best = null, bd = Infinity;
+    d.points.forEach(p => { const dt = Math.abs(+new Date(p[0]) - when); if (dt < bd) { bd = dt; best = p; } });
+    /* nothing close enough is better than a number from a different afternoon */
+    if (!best || bd > READ_NEAR_MIN * 6e4) return "";
+    const r = { at: best[0] };
+    if (best[1] != null) r.temp_k = best[1];
+    if (best[2] != null) r.psi = best[2];
+    if (best[3] != null) r.heater_w = best[3];
+    return (r.psi != null || r.temp_k != null) ? JSON.stringify(r) : "";
+  }
+
   const readActRows = () => [...$("#ev-f-acts").querySelectorAll(".ev-arow")]
     .map(r => ({ ts: r.querySelector(".a-when").value, who: r.querySelector(".a-who").value.trim(),
                  what: r.querySelector(".a-what").value.trim(), result: r.querySelector(".a-result").value.trim() }))
     .filter(a => a.what)
     .sort((x, y) => new Date(x.ts) - new Date(y.ts));
+
+  function readingsLabel(d) {
+    const n = $("#ev-f-readings-label"); if (!n) return;
+    n.textContent = (Date.now() - d) > 36e5
+      ? ` attach the readings logged at ${fmtDT(d)}` : " attach the readings showing right now";
+  }
 
   function wireEvents() {
     fillEquip($("#ev-f-equip"), $("#ev-f-equip-other"), "");
@@ -740,6 +775,7 @@
     $("#ev-f-opened").addEventListener("change", () => {
       const d = new Date($("#ev-f-opened").value); if (isNaN(d)) return;
       $("#ev-f-acts").querySelectorAll(".a-when").forEach(i => { if (!i.dataset.touched) setWhen(i, d); });
+      readingsLabel(d);
     });
     const openRow = li => { if (li) location.hash = "event/" + li.dataset.id; };
     $("#ev-list").addEventListener("click", ev => openRow(ev.target.closest("li[data-id]")));
@@ -762,6 +798,7 @@
         setWhen($("#ev-f-opened"), new Date());
         $("#ev-f-closed").value = ""; $("#ev-f-closed").dispatchEvent(new Event("input"));
         $("#ev-f-acts").innerHTML = ""; addActRow();
+        readingsLabel(new Date());
         $("#ev-f-title").focus();
       }
     };
@@ -783,17 +820,14 @@
       const early = acts.find(a => !a.ts || isNaN(new Date(a.ts)));
       if (early) return evMsg("One of the action lines has no time.", true);
       if (!evOffline && !code) return evMsg("Enter the edit code.", true);
-      /* the live readings are copied in at creation, because by the time the event is written
-         up the instrument has usually moved on and the number that mattered is gone */
-      let readings = "";
-      if ($("#ev-f-readings").checked && TEL && TEL.latest) {
-        const l = TEL.latest, r = { at: l.seen || new Date().toISOString() };
-        if (l.psi) r.psi = l.psi.v;
-        if (l.temp_k) r.temp_k = l.temp_k.v;
-        if (l.heater_w) r.heater_w = l.heater_w.v;
-        if (r.psi != null || r.temp_k != null) readings = JSON.stringify(r);
-      }
       const btn = $("#ev-f-save"); btn.disabled = true;
+      /* copied in at save time, because by the time an event is written up the instrument
+         has moved on and the number that mattered is gone from the screen */
+      let readings = "";
+      if ($("#ev-f-readings").checked) {
+        evMsg("Looking up the readings from that time\u2026", false);
+        try { readings = await readingsAt(+opened); } catch (e) { readings = ""; }
+      }
       const steps = 1 + acts.length + (closed ? 1 : 0);
       let done = 0, id = null;
       const step = () => evMsg(`Saving… ${++done} of ${steps}`, false);
