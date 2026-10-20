@@ -12,19 +12,34 @@
     const links = (it.links || []).map(l =>
       `<a class="btn small${l.primary ? " primary" : ""}" href="${esc(l.href)}"${/^https?:/.test(l.href) ? ' target="_blank" rel="noopener"' : " download"}>${esc(l.label)}</a>`).join("");
     const meta = [it.version && `v${esc(it.version)}`, it.date && esc(it.date), it.license ? esc(it.license) : "ask before reuse"]
-      .filter(Boolean).join(" · ");
-    return `<article class="sw-card">
-      <div class="sw-top">
-        <h2>${esc(it.name)}</h2>
-        ${prep ? '<span class="st warn">being packaged</span>' : it.kind ? `<span class="sw-kind">${esc(KIND[it.kind] || it.kind)}</span>` : ""}
+      .filter(Boolean).join(" \u00b7 ");
+    /* The screen first, then what it does: a reader decides whether to care from the picture,
+       and the bullets answer "can it do the thing I came for". */
+    const media = it.image ? `<figure class="sw-shot">
+        <a href="${esc(it.image)}" target="_blank" rel="noopener">
+          <img src="${esc(it.image)}" alt="${esc(it.imageAlt || it.name)}" loading="lazy"></a>
+        ${it.imageNote ? `<figcaption>${esc(it.imageNote)}</figcaption>` : ""}
+      </figure>` : "";
+    const feats = (it.features || []).length
+      ? `<ul class="sw-feat">${it.features.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : "";
+    const foot = links || meta || prep
+      ? `<div class="sw-foot">${links || (prep ? '<span class="subtle">not downloadable yet</span>' : "")}
+         ${meta ? `<span class="subtle sw-meta">${meta}</span>` : ""}</div>` : "";
+    return `<article class="sw-card${it.image ? " has-shot" : ""}">
+      ${media}
+      <div class="sw-body">
+        <div class="sw-top">
+          <h2>${esc(it.name)}</h2>
+          ${prep ? '<span class="st warn">being packaged</span>' : it.kind ? `<span class="sw-kind">${esc(KIND[it.kind] || it.kind)}</span>` : ""}
+        </div>
+        ${it.tagline ? `<p class="sw-tag">${esc(it.tagline)}</p>` : ""}
+        ${feats}
+        ${it.what ? `<p class="sw-what">${esc(it.what)}</p>` : ""}
+        ${it.needs ? `<p class="sw-needs"><b>Needs</b> ${esc(it.needs)}</p>` : ""}
+        ${it.caveat ? `<p class="sw-caveat">${esc(it.caveat)}</p>` : ""}
+        ${it.cite ? `<p class="sw-cite"><b>If it helps a paper</b> ${esc(it.cite)}</p>` : ""}
+        ${foot}
       </div>
-      ${it.tagline ? `<p class="sw-tag">${esc(it.tagline)}</p>` : ""}
-      ${it.what ? `<p class="sw-what">${esc(it.what)}</p>` : ""}
-      ${it.needs ? `<p class="sw-needs"><b>Needs</b> ${esc(it.needs)}</p>` : ""}
-      ${it.caveat ? `<p class="sw-caveat">${esc(it.caveat)}</p>` : ""}
-      ${it.cite ? `<p class="sw-cite"><b>If it helps a paper</b> ${esc(it.cite)}</p>` : ""}
-      <div class="sw-foot">${links || (prep ? '<span class="subtle">not downloadable yet</span>' : "")}
-        ${meta ? `<span class="subtle sw-meta">${meta}</span>` : ""}</div>
     </article>`;
   }
 

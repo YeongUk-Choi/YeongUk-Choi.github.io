@@ -305,24 +305,32 @@ footer { border-top: 1px solid var(--line); padding: 26px 0; color: var(--fg-3);
 /* ---------- Mobile ---------- */
 
 /* ---------- Software page ---------- */
-/* a lone card should not stretch the width of a desktop screen */
-.sw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 560px)); gap: 14px; margin-top: 26px; }
-.sw-grid > * { min-width: 0; }
+.sw-grid { display: grid; gap: 16px; margin-top: 26px; max-width: 1120px; }
 .sw-card { padding: 22px 24px; border-radius: var(--radius-sm); background: var(--glass); border: 1px solid var(--line);
-  display: flex; flex-direction: column; gap: 8px; }
+  display: flex; flex-direction: column; gap: 10px; }
+/* screen on the left, what it does on the right */
+.sw-card.has-shot { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 26px; align-items: start; }
+.sw-shot { margin: 0; }
+.sw-shot img { width: 100%; display: block; border-radius: 10px; border: 1px solid var(--line); background: #0f1115; }
+.sw-shot figcaption { font-size: 12px; color: var(--fg-3); margin-top: 7px; line-height: 1.45; }
+.sw-body { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
 .sw-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.sw-card h2 { font-size: 19px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+.sw-card h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
 .sw-kind { font-size: 11.5px; color: var(--fg-3); white-space: nowrap; }
 .sw-tag { margin: 0; font-size: 14.5px; color: var(--fg-2); }
+.sw-feat { margin: 2px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+.sw-feat li { position: relative; padding-left: 15px; font-size: 13.5px; color: var(--fg-2); line-height: 1.5; }
+.sw-feat li::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--violet-2); }
 .sw-what { margin: 0; font-size: 14px; color: var(--fg-3); line-height: 1.5; }
 .sw-needs, .sw-cite { margin: 0; font-size: 12.5px; color: var(--fg-3); }
-/* the honest line: what the tool has and has not been tested against, before the download button */
+.sw-needs b, .sw-cite b { color: var(--fg-2); font-weight: 600; margin-right: 5px; }
+/* the honest line: what the tool has and has not been tested against */
 .sw-caveat { margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--fg-2);
   border-left: 2px solid var(--orange); padding-left: 10px; }
-.sw-needs b, .sw-cite b { color: var(--fg-2); font-weight: 600; margin-right: 5px; }
-.sw-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.sw-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .sw-meta { margin-left: auto; font-size: 12px; }
-.sw-empty { grid-column: 1 / -1; padding: 30px 28px; border-radius: var(--radius-sm);
+.sw-empty { padding: 30px 28px; border-radius: var(--radius-sm);
   background: var(--glass); border: 1px dashed var(--line); max-width: 640px; }
 .sw-empty b { font-size: 16px; }
 .sw-empty p { color: var(--fg-3); font-size: 14.5px; line-height: 1.55; margin: 8px 0 16px; }
@@ -465,6 +473,8 @@ h2.sec { font-size: 13px; text-transform: uppercase; letter-spacing: 0.14em; col
   .he-form { display: grid; grid-template-columns: 1fr auto; }
   .he-form select, .he-form input, .he-form .btn { width: 100%; min-width: 0; }
   .he-form #he-act, .he-form #he-note { grid-column: 1 / -1; }
+  .sw-card.has-shot { grid-template-columns: 1fr; gap: 16px; }
+  .sw-card { padding: 18px 18px; }
   .ev-list li { grid-template-columns: auto 1fr; grid-template-areas: "d s" "t t" "w n"; row-gap: 4px; gap: 10px; }
   .ev-list .d { grid-area: d; } .ev-list li > span:nth-child(2) { grid-area: s; justify-self: end; }
   .ev-list .t { grid-area: t; } .ev-list .w { grid-area: w; } .ev-list .n { grid-area: n; justify-self: end; }
