@@ -1,0 +1,30 @@
+:root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { min-height: 100vh; margin: 0; color: #f2f5fa; background: radial-gradient(circle at 25% 0%, #293c57 0, #101824 42%, #090e16 100%); }
+a { color: #c5d7ff; }
+button, input { font: inherit; }
+.gate { min-height: 100vh; max-width: 960px; margin: auto; padding: 38px 24px; }
+.gate-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: min(11vh, 90px); }
+.back { display: inline-block; text-decoration: none; font-size: 14px; }
+#gate-language { padding: 8px 12px; color: #dbe4ef; background: #26384f; font-size: 13px; }
+#refresh-button { margin: 0 12px 16px 0; padding: 8px 12px; font-size: 13px; }
+.gate-card { max-width: 580px; padding: clamp(28px, 5vw, 48px); border: 1px solid #ffffff22; border-radius: 24px; background: #ffffff0c; box-shadow: 0 26px 80px #0005; }
+.app-icon { display: block; border-radius: 18px; }
+.eyebrow { margin: 24px 0 6px; color: #a7bad4; font-size: 11px; font-weight: 750; letter-spacing: .18em; }
+h1 { margin: 0; font-size: clamp(36px, 6vw, 58px); letter-spacing: -.045em; }
+.description { max-width: 490px; margin: 12px 0 30px; color: #c0cad8; font-size: 15px; line-height: 1.6; }
+label { display: block; margin-bottom: 8px; color: #dbe4ef; font-size: 13px; font-weight: 650; }
+.form-row { display: flex; gap: 10px; }
+input { min-width: 0; flex: 1; padding: 13px 14px; color: #fff; background: #090f1a; border: 1px solid #62748a; border-radius: 10px; }
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid #b9ceff; outline-offset: 3px; }
+button { padding: 13px 18px; color: #09131f; background: #c8d9ff; border: 0; border-radius: 10px; font-weight: 750; cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+.status { min-height: 24px; margin: 13px 0 20px; color: #ffbb9f; font-size: 13px; }
+.request { font-size: 13px; text-decoration: none; }
+.workspace { height: 100vh; }
+.workspace-bar { height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; background: #0b1421; font-size: 13px; }
+.workspace-bar a { text-decoration: none; }
+.workspace-bar button { padding: 6px 10px; color: #dbe4ef; background: #26384f; font-size: 12px; }
+#studio-frame { display: block; width: 100%; height: calc(100vh - 44px); border: 0; background: #fff; }
+[hidden] { display: none !important; }
+@media (max-width: 580px) { .gate { padding: 22px 16px; } .gate-nav { margin-bottom: 44px; } .form-row { flex-direction: column; } }

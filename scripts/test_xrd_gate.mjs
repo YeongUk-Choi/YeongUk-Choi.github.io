@@ -1,0 +1,370 @@
+#!/usr/bin/env node
+// Integration check using Node's built-in WebSocket and a private headless Chrome.
+// No production authentication requests: local config, an allowlist server, and
+// CDP interception prohibit requests outside this test's loopback origin.
+// Usage: node scripts/test_xrd_gate.mjs --xrd-root ../xrd-studio-gpt [--chrome PATH]
+import assert from "node:assert/strict";
+import {spawn, execFileSync} from "node:child_process";
+import {createHash, randomBytes} from "node:crypto";
+import {createServer} from "node:http";
+import {mkdtemp, readFile, writeFile, rm, mkdir} from "node:fs/promises";
+import path from "node:path";
+import {fileURLToPath, pathToFileURL} from "node:url";
+
+const siteRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const options = process.argv.slice(2);
+function option(name, fallback) {
+  const i = options.indexOf(name);
+  if (i < 0) return fallback;
+  if (!options[i + 1]) throw new Error(`Missing value for ${name}`);
+  return options[i + 1];
+}
+for (let i = 0; i < options.length; i += 2) {
+  assert(["--xrd-root", "--chrome", "--output"].includes(options[i]), `Unknown argument ${options[i]}`);
+  assert(options[i + 1], `Missing value for ${options[i]}`);
+}
+const xrdRoot = path.resolve(option("--xrd-root", path.join(siteRoot, "../xrd-studio-gpt")));
+const chromePath = option("--chrome", process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+const temp = await mkdtemp("/private/tmp/xrd-gate-test-");
+const evidence = path.resolve(option("--output", path.join(temp, "evidence")));
+await mkdir(evidence, {recursive: true});
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const hash = (value) => createHash("sha256").update(value).digest("hex");
+const storageName = "xrd-studio-session-key";
+const tests = [], errors = [], network = [], blocked = [], responses = [];
+const record = (name, detail) => { tests.push({name, detail}); console.log(`PASS ${name}`); };
+let chrome, socket, server, cdp, evaluate, screenshot;
+
+async function connect(url) {
+  const ws = new WebSocket(url), pending = new Map(), handlers = new Map();
+  let next = 0;
+  ws.addEventListener("message", (event) => {
+    const message = JSON.parse(event.data);
+    if (message.id) {
+      const call = pending.get(message.id);
+      if (call) {
+        clearTimeout(call.timer); pending.delete(message.id);
+        if (message.error) call.reject(new Error(`${call.method}: ${message.error.message}`));
+        else call.resolve(message.result);
+      }
+    } else {
+      for (const handler of handlers.get(message.method) || []) {
+        Promise.resolve(handler(message.params)).catch((error) => errors.push(`Harness event: ${error.message}`));
+      }
+    }
+  });
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, {once: true});
+    ws.addEventListener("error", reject, {once: true});
+  });
+  return {socket: ws,
+    on(method, handler) {
+      if (!handlers.has(method)) handlers.set(method, []);
+      handlers.get(method).push(handler);
+    },
+    send(method, params = {}) {
+      return new Promise((resolve, reject) => {
+        const id = ++next;
+        const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP timed out: ${method}`)); }, 15000);
+        pending.set(id, {resolve, reject, timer, method});
+        ws.send(JSON.stringify({id, method, params}));
+      });
+    },
+  };
+}
+
+try {
+  execFileSync("python3", [path.join(xrdRoot, "scripts/build_web.py"), "--output", path.join(temp, "plain")]);
+  const {encryptFiles} = await import(pathToFileURL(path.join(xrdRoot, "scripts/encrypt_web.mjs")));
+  const filenames = ["index.html", "en/index.html", "app.js", "en/app.js", "styles.css",
+    "xrd_core.js", "xrd_fit.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
+  const files = Object.fromEntries(await Promise.all(filenames.map(async (name) =>
+    [name, await readFile(path.join(temp, "plain", name), "utf8")])));
+  const key = randomBytes(32);
+  const envelope = await encryptFiles(files, key);
+  assert.equal(envelope.version, 1);
+  assert.match(envelope.build, /^[a-f0-9]{64}$/, "Encrypted package needs its content build hash");
+  const goodBody = JSON.stringify(envelope);
+  const goodManifest = {version: 1, build: envelope.build, bundle: "xrd-app.enc", sha256: hash(goodBody)};
+  const wrongCode = "intentionally-wrong-test-code";
+  const correctCode = `test-only-${randomBytes(12).toString("hex")}`;
+  const fixture = {enabled: true, body: goodBody, manifest: goodManifest, authBuild: envelope.build};
+  let authCalls = 0, wrongResponses = 0;
+  const assets = new Map([
+    ["/xrd-studio.html", "text/html"], ["/assets/js/xrd-gate.js", "text/javascript"],
+    ["/assets/css/xrd-gate.css", "text/css"], ["/assets/img/software/xrd-studio-icon.svg", "image/svg+xml"],
+  ]);
+  let origin;
+  server = createServer(async (request, response) => {
+    try {
+      const route = new URL(request.url, origin).pathname;
+      response.setHeader("Cache-Control", "no-store");
+      if (route === "/data/xrd.js") {
+        response.setHeader("Content-Type", "text/javascript");
+        response.end(`window.XRD_GATE=${JSON.stringify({enabled: fixture.enabled, apiUrl: `${origin}/test-auth`})};`);
+      } else if (route === "/data/ppms.js") {
+        response.setHeader("Content-Type", "text/javascript");
+        response.end(`window.SITE={ppms:{apiUrl:${JSON.stringify(`${origin}/test-auth`)}}};`);
+      } else if (route === "/test-auth") {
+        authCalls++;
+        assert.equal(request.method, "POST", "Authentication must use POST");
+        let body = "";
+        for await (const chunk of request) { body += chunk; assert(body.length < 4096); }
+        const params = new URLSearchParams(body);
+        assert.equal(params.get("action"), "xrdkey");
+        const ok = params.get("code") === correctCode;
+        const value = ok ? {ok: true, key: key.toString("base64"), version: 1, build: fixture.authBuild}
+          : {ok: false, error: "Wrong code."};
+        if (!ok) {
+          wrongResponses++;
+          assert(!("key" in value));
+          assert(!JSON.stringify(value).includes("XRDCore"));
+        }
+        responses.push({route, ok, properties: Object.keys(value)});
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify(value));
+      } else if (route === "/assets/dl/xrd-app.manifest.json") {
+        response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(fixture.manifest));
+      } else if (route === "/assets/dl/xrd-app.enc") {
+        response.setHeader("Content-Type", "application/json"); response.end(fixture.body);
+      } else if (assets.has(route)) {
+        response.setHeader("Content-Type", assets.get(route)); response.end(await readFile(path.join(siteRoot, route)));
+      } else if (route === "/favicon.ico") {
+        response.writeHead(204); response.end();
+      } else {
+        errors.push(`Unexpected asset request: ${route}`);
+        response.writeHead(404); response.end("Test asset not allowed");
+      }
+    } catch (error) {
+      errors.push(`Fixture server: ${error.message}`); response.writeHead(500); response.end("Test fixture error");
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  origin = `http://127.0.0.1:${server.address().port}`;
+
+  chrome = spawn(chromePath, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+    "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-default-apps",
+    "--remote-debugging-port=0", `--user-data-dir=${path.join(temp, "chrome-profile")}`, "about:blank"], {stdio: "ignore"});
+  let port;
+  for (let attempt = 0; attempt < 80 && !port; attempt++) {
+    try { port = Number((await readFile(path.join(temp, "chrome-profile/DevToolsActivePort"), "utf8")).split("\n")[0]); }
+    catch { await delay(100); }
+  }
+  assert(port, "Chrome did not expose a debugging port");
+  const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+  cdp = await connect(targets.find((target) => target.type === "page").webSocketDebuggerUrl);
+  socket = cdp.socket;
+  cdp.on("Runtime.exceptionThrown", ({exceptionDetails: detail}) => {
+    errors.push(detail.exception?.description || detail.text);
+  });
+  cdp.on("Runtime.consoleAPICalled", ({type, args}) => {
+    if (type === "error") errors.push(`console.error: ${args.map((arg) => arg.value || arg.description).join(" ")}`);
+  });
+  cdp.on("Network.requestWillBeSent", ({request}) => network.push({url: request.url, method: request.method}));
+  cdp.on("Fetch.requestPaused", async ({requestId, request}) => {
+    if (/^https?:/.test(request.url) && new URL(request.url).origin !== origin) {
+      blocked.push(request.url); await cdp.send("Fetch.failRequest", {requestId, errorReason: "BlockedByClient"});
+    } else await cdp.send("Fetch.continueRequest", {requestId});
+  });
+  await Promise.all([cdp.send("Runtime.enable"), cdp.send("Page.enable"), cdp.send("Network.enable")]);
+  const mainFrame = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+  const loaded = new Set();
+  let loadCount = 0;
+  cdp.on("Page.lifecycleEvent", ({name, frameId, loaderId}) => {
+    if (name === "load" && frameId === mainFrame) { loaded.add(loaderId); loadCount++; }
+  });
+  await cdp.send("Page.setLifecycleEventsEnabled", {enabled: true});
+  await cdp.send("Fetch.enable", {patterns: [{urlPattern: "*", requestStage: "Request"}]});
+  await cdp.send("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false});
+  evaluate = async (expression) => {
+    const value = await cdp.send("Runtime.evaluate", {expression, returnByValue: true, awaitPromise: true});
+    if (value.exceptionDetails) throw new Error(value.exceptionDetails.exception?.description || value.exceptionDetails.text);
+    return value.result.value;
+  };
+  const waitFor = async (expression, label, timeout = 15000) => {
+    const end = Date.now() + timeout;
+    let lastError;
+    while (Date.now() < end) {
+      try { if (await evaluate(expression)) return; } catch (error) { lastError = error; }
+      await delay(100);
+    }
+    const status = await evaluate(`document.getElementById("gate-status")?.textContent`);
+    throw new Error(`Timed out: ${label}; gate=${status}; ${lastError?.message || ""}`);
+  };
+  screenshot = async (name) => {
+    const {data} = await cdp.send("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
+    await writeFile(path.join(evidence, `${name}.png`), Buffer.from(data, "base64"));
+  };
+  const page = async (language = "en") => {
+    const {loaderId} = await cdp.send("Page.navigate", {url: `${origin}/xrd-studio.html?lang=${language}`});
+    const deadline = Date.now() + 15000;
+    while (!loaded.has(loaderId) && Date.now() < deadline) await delay(50);
+    assert(loaded.has(loaderId), "New page did not finish loading");
+    await waitFor(`document.readyState === "complete" && !!document.getElementById("unlock-form")`, "gate page load");
+  };
+  const reload = async () => {
+    const previous = loadCount;
+    await cdp.send("Page.reload", {ignoreCache: true});
+    const deadline = Date.now() + 15000;
+    while (loadCount === previous && Date.now() < deadline) await delay(50);
+    assert(loadCount > previous, "Reload did not finish loading");
+  };
+  const submit = async (code) => {
+    await evaluate(`document.getElementById("access-code").value=${JSON.stringify(code)};
+      document.getElementById("unlock-form").dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}));`);
+    await waitFor(`!document.getElementById("unlock-button").disabled`, "authentication completes");
+  };
+  const app = (expression) => `(() => {const f=document.getElementById("studio-frame");
+    const d=f?.contentDocument; if (!d) return null; return (${expression});})()`;
+  const appReady = () => waitFor(app(`d.getElementById("dataName")?.textContent === "sample_data.dat" &&
+    /1,001/.test(d.getElementById("dataMeta")?.textContent) && !d.getElementById("runSimulation")?.disabled`), "decrypted app sample and simulation");
+  const appClick = (id) => evaluate(app(`d.getElementById(${JSON.stringify(id)}).click()`));
+  const sessionPresent = async () => Boolean(await evaluate(`sessionStorage.getItem(${JSON.stringify(storageName)})`));
+  const assertLocked = async () => {
+    assert.equal(await evaluate(`document.getElementById("workspace").hidden`), true);
+    assert.equal(await evaluate(app(`Boolean(d.getElementById("settingsForm"))`)), false);
+    assert.equal(await sessionPresent(), false);
+  };
+  const assertSecretStorage = async () => {
+    const data = await evaluate(`({session:Object.entries(sessionStorage),local:Object.entries(localStorage),code:document.getElementById("access-code").value})`);
+    assert.equal(data.session.length, 1, "Only the app session should be stored");
+    assert.equal(data.session[0][0], storageName);
+    assert(data.session[0][1].includes(key.toString("base64")), "Session should retain the app key");
+    assert.equal(data.local.length, 0, "Persistent localStorage must stay empty");
+    assert.equal(data.code, "", "Password input should be cleared");
+    assert(!data.session[0][1].includes(correctCode), "Password must not be retained");
+  };
+
+  fixture.enabled = false;
+  await page("en");
+  await evaluate(`document.getElementById("unlock-form").dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}))`);
+  await delay(150);
+  assert.equal(authCalls, 0); await assertLocked();
+  record("Disabled configuration does not call authentication");
+  fixture.enabled = true;
+  await page("en");
+  assert.equal(await evaluate("document.documentElement.lang"), "en");
+  const beforeWrong = network.length;
+  await submit(wrongCode);
+  assert.equal(wrongResponses, 1); await assertLocked();
+  assert(!network.slice(beforeWrong).some(({url}) => /xrd-app\.(?:enc|manifest)/.test(url)), "Wrong code must not load app package");
+  assert.match(await evaluate(`document.getElementById("gate-status").textContent`), /wrong|incorrect|invalid/i);
+  await screenshot("wrong-code-en");
+  record("Wrong password returns no key or code and opens no iframe", {responseProperties: responses.at(-1).properties});
+
+  await evaluate(`document.getElementById("gate-language").click()`);
+  await waitFor(`document.documentElement.lang === "ko"`, "Korean gate language");
+  assert.match(await evaluate(`document.getElementById("unlock-button").textContent`), /[가-힣]/);
+  await screenshot("gate-ko");
+  await cdp.send("Emulation.setDeviceMetricsOverride", {width: 390, height: 844, deviceScaleFactor: 1, mobile: true});
+  assert(await evaluate("document.documentElement.scrollWidth <= innerWidth"), "Gate must not overflow a mobile viewport");
+  await screenshot("gate-ko-mobile");
+  await cdp.send("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false});
+  record("Gate switches between English and Korean");
+  await submit(correctCode); await appReady(); await assertSecretStorage();
+  assert.equal(await evaluate(app("d.documentElement.lang")), "ko");
+  record("Correct password decrypts Korean app with 1,001 sample points; sessionStorage only");
+
+  async function fitFlow(language) {
+    const before = await evaluate(app(`["film_lattice_a","film_thickness_nm","angle_offset_deg"].map(id=>d.getElementById(id).value)`));
+    await appClick("runFit");
+    await waitFor(app(`!d.getElementById("cancelFit").hidden && /[1-9][0-9]*\\/400/.test(d.getElementById("fitProgress").textContent)`), `${language} fit progress`, 30000);
+    const progress = await evaluate(app(`d.getElementById("fitProgress").textContent`));
+    await appClick("cancelFit");
+    await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled`), `${language} cancellation`);
+    assert.deepEqual(await evaluate(app(`["film_lattice_a","film_thickness_nm","angle_offset_deg"].map(id=>d.getElementById(id).value)`)), before);
+    const cancelled = await evaluate(app(`d.getElementById("fitProgress").textContent`));
+    assert.match(cancelled, language === "ko" ? /중단/ : /cancel|stop/i);
+    await appClick("runFit");
+    await waitFor(app(`!d.getElementById("fitResult").hidden && d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled`), `${language} completed refit`, 60000);
+    const details = await evaluate(app(`d.getElementById("fitResultDetails").textContent`));
+    assert.match(details, /400/);
+    if (language === "en") assert(!/[가-힣]/.test(details));
+    await screenshot(`fit-${language}`);
+    record(`${language}: progress, cancel without parameter changes, complete 400 evaluation refit`, {progress, details});
+  }
+  await fitFlow("ko");
+  const beforeReload = authCalls;
+  await reload(); await appReady();
+  assert.equal(authCalls, beforeReload, "Reload must restore using tab session, without a password request");
+  await assertSecretStorage();
+  record("Reload restores app from tab session without another authentication request");
+
+  await appClick("runFit");
+  await waitFor(app(`!d.getElementById("cancelFit").hidden`), "active fit before lock");
+  await evaluate(`document.getElementById("lock-button").click()`);
+  await waitFor(`document.getElementById("workspace").hidden`, "lock operation");
+  await delay(100); await assertLocked();
+  assert.equal(await evaluate(`document.getElementById("studio-frame").getAttribute("srcdoc") || ""`), "");
+  record("Lock during active fit removes session and destroys application iframe document");
+  await reload();
+  await waitFor(`document.readyState === "complete" && !!document.getElementById("unlock-form")`, "locked reload");
+  await assertLocked(); assert.equal(authCalls, beforeReload);
+  record("Reload after lock stays locked");
+
+  await page("en"); await submit(correctCode); await appReady();
+  assert.equal(await evaluate(app("d.documentElement.lang")), "en");
+  await fitFlow("en");
+
+  async function refreshFailure(name, language, change) {
+    await evaluate(`document.getElementById("lock-button").click()`); await assertLocked();
+    fixture.body = goodBody; fixture.manifest = goodManifest; fixture.authBuild = envelope.build;
+    await page(language); await submit(correctCode); await appReady();
+    change();
+    const calls = authCalls;
+    await reload();
+    await waitFor(`document.readyState === "complete" && !sessionStorage.getItem(${JSON.stringify(storageName)}) &&
+      !!document.getElementById("gate-status")?.textContent`, name);
+    await assertLocked(); assert.equal(authCalls, calls);
+    const message = await evaluate(`document.getElementById("gate-status").textContent`);
+    assert.match(message, language === "ko" ? /새로고침/ : /refresh|reload/i);
+    await screenshot(name);
+    record(`${name}: localized refresh guidance and session cleared`, {message});
+  }
+  await refreshFailure("stale-build-ko", "ko", () => {
+    fixture.manifest = {...goodManifest, build: "a".repeat(64)};
+    fixture.authBuild = fixture.manifest.build;
+  });
+  await refreshFailure("damaged-cipher-en", "en", () => {
+    const damaged = Buffer.from(envelope.ciphertext, "base64"); damaged[0] ^= 1;
+    fixture.body = JSON.stringify({...envelope, ciphertext: damaged.toString("base64")});
+    fixture.manifest = {...goodManifest, sha256: hash(fixture.body)};
+  });
+  await refreshFailure("hash-mismatch-ko", "ko", () => {
+    fixture.body = `${goodBody}\n`;
+  });
+
+  assert.equal(await evaluate("localStorage.length"), 0);
+  const plaintextRequests = network.filter(({url}) => /^https?:/.test(url) &&
+    /\/(?:xrd_(?:core|fit|local|worker)\.js|xrd_data\.json|sample_data\.dat|(?:en\/)?app\.js)(?:[?#]|$)/.test(new URL(url).pathname));
+  assert.deepEqual(plaintextRequests, []);
+  assert.deepEqual(blocked, [], "App must not try to contact external services");
+  assert.deepEqual(errors, [], "No JavaScript errors or missing assets");
+  record("No plaintext application asset fetch, persistent secret storage, external request, console error, or 404", {requests: network.length});
+  await writeFile(path.join(evidence, "report.json"), JSON.stringify({passed: true, tests,
+    source: {siteHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: siteRoot, encoding: "utf8"}).trim(),
+      gateSha256: hash(await readFile(path.join(siteRoot, "assets/js/xrd-gate.js"))),
+      xrdHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: xrdRoot, encoding: "utf8"}).trim(), bundleBuild: envelope.build},
+    network, responses, errors, blocked}, null, 2));
+  console.log(`Evidence: ${evidence}`);
+} catch (error) {
+  process.exitCode = 1;
+  if (screenshot) { try { await screenshot("failure"); } catch {} }
+  await writeFile(path.join(evidence, "report.json"), JSON.stringify({passed: false, failure: error.message,
+    tests, network, responses, errors, blocked}, null, 2));
+  console.error(error.stack);
+  console.error(`Evidence: ${evidence}`);
+} finally {
+  if (socket) socket.close();
+  if (chrome && chrome.exitCode === null) {
+    chrome.kill();
+    await Promise.race([new Promise((resolve) => chrome.once("exit", resolve)), delay(2000)]);
+    if (chrome.exitCode === null) chrome.kill("SIGKILL");
+  }
+  if (server) await new Promise((resolve) => server.close(resolve));
+  await rm(path.join(temp, "plain"), {recursive: true, force: true});
+  await rm(path.join(temp, "chrome-profile"), {recursive: true, force: true});
+}

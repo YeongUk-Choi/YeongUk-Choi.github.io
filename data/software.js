@@ -29,9 +29,10 @@ window.SITE.software = {
     {
       name: "XRD Studio",
       tagline: "Simulate and fit a symmetric \u03b8\u20132\u03b8 scan of a perovskite film on its substrate \u2014 in a browser, with nothing to install.",
-      kind: "desktop",
+      kind: "web",
       sub: "Runs in your browser \u00b7 thin-film X-ray diffraction",
       icon: "assets/img/software/xrd-studio-icon.svg",
+      launch: "xrd-studio.html",
       status: "released",
       version: "1.1", date: "2026-10-21", license: "",
       image: "assets/img/software/xrd-studio.jpg",
@@ -45,14 +46,14 @@ window.SITE.software = {
         "Fits lattice constant, thickness, zero offset, instrumental width, substrate coherence and background within bounds you set",
         "Per-region residuals, so a good overall score cannot hide a wrong tail",
         "Tells you when a result needs review \u2014 a parameter on its bound, a large residual, a thickness that is a conversion rather than a fit",
-        "Runs on Python 3.9 with no packages to install; the server listens on your own machine only"
+        "Runs entirely in your browser after unlocking; measurement files and fitting stay on your device"
       ],
-      needs: "Python 3.9 or newer \u00b7 nothing else \u00b7 Korean and English interface",
+      needs: "A current browser and an access code \u00b7 Korean and English interface",
       caveat: "One-dimensional kinematic diffraction only \u2014 no dynamical diffraction, tilt, 3D strain, roughness, " +
               "absorption or K\u03b1 doublet. Five substrates are calculated with the full ABO\u2083 structure factor; " +
               "the rest put the peak and the fringe spacing in the right place but approximate the substrate peak height. " +
               "Check your reflection assignment before reading a fitted number as a measurement.",
-      links: []
+      links: [{label: "Open in browser", href: "xrd-studio.html", primary: true, page: true}]
     },
     {
       name: "Rietveld Auto",
