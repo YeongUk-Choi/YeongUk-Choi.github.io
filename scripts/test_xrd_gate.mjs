@@ -374,7 +374,9 @@ try {
     }
     throw new Error(`Download did not finish: ${name}`);
   }
-  const newModelKeys = ["film_interface_width", "film_thickness_sigma", "background_slope"];
+  const newModelDefaults = {film_interface_width:0, film_thickness_sigma:0, background_slope:0,
+    resolution_halo_fraction:0, resolution_halo_width:3};
+  const newModelKeys = Object.keys(newModelDefaults);
   const expectedModes = ["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized",
     "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"];
   async function saveCurrentProject(name) {
@@ -405,7 +407,12 @@ try {
       modes:Array.from(d.getElementById("lp_mode").options, option=>({value:option.value,label:option.textContent})),
       fields:${JSON.stringify(newModelKeys)}.map(key=>({key,value:d.getElementById(key).value,
         label:d.getElementById(key).closest("label").textContent,
-        fitLabel:d.querySelector('[data-fit-key="'+key+'"]').textContent}))
+        fitLabel:d.querySelector('[data-fit-key="'+key+'"]').textContent})),
+      advanced:{open:d.getElementById("advancedFitVariables").open,
+        text:d.getElementById("advancedFitVariables").textContent,
+        taperInside:!!d.getElementById("fit_enable_film_interface_width").closest("#advancedFitVariables"),
+        taperEnabled:d.getElementById("fit_enable_film_interface_width").checked},
+      haloNote:d.getElementById("resolution_halo_fraction").closest("fieldset").textContent
     })`));
     assert.deepEqual(labels.modes.map(({value})=>value).sort(), [...expectedModes].sort());
     for (const field of labels.fields) {
@@ -415,9 +422,19 @@ try {
     if (language === "en") {
       assert(!/[가-힣]/.test(JSON.stringify(labels)), "New English fields, fit rows and mode options must be translated");
     } else assert(/[가-힣]/.test(JSON.stringify(labels)), "Korean control labels must render");
-    record(`${language}: all refinement inputs, fit controls and seven measurement modes render`, labels);
+    assert.equal(labels.advanced.open, false, "Advanced taper options should start collapsed");
+    assert.equal(labels.advanced.taperInside, true, "Taper fitting belongs in advanced controls");
+    assert.equal(labels.advanced.taperEnabled, false, "Taper fitting must be opt-in");
+    assert.match(labels.advanced.text, /SRO\/STO 002/);
+    assert.match(labels.haloNote, language === "ko" ? /측정된 기구 함수가 아닙니다/ : /not a measured instrument function/i);
+    assert.deepEqual((await readNewControls()).values, newModelDefaults, "New model controls must have neutral defaults");
+    for (const [key, min, max] of [["resolution_halo_fraction",0,0.2],["resolution_halo_width",1,20]]) {
+      assert.deepEqual(await evaluate(app(`(() => {const n=d.getElementById(${JSON.stringify(key)});return [Number(n.min),Number(n.max)];})()`)), [min,max]);
+    }
+    record(`${language}: refinement and halo controls have translated labels, neutral defaults and opt-in advanced taper`, labels);
 
-    const chosen = {film_interface_width: 2.25, film_thickness_sigma: 1.5, background_slope: -0.04};
+    const chosen = {film_interface_width: 2.25, film_thickness_sigma: 1.5, background_slope: -0.04,
+      resolution_halo_fraction:0.0075, resolution_halo_width:4.5};
     await evaluate(app(`(() => {
       for (const [key,value] of Object.entries(${JSON.stringify(chosen)})) {
         d.getElementById(key).value=String(value);
@@ -441,7 +458,7 @@ try {
     for (const key of newModelKeys) delete legacy.fit_settings.variables[key];
     delete legacy.fit_result;
     await loadProjectFixture(legacy, `refinement-${language}-legacy`);
-    const expectedDefaults = {values:Object.fromEntries(newModelKeys.map(key=>[key,0])),mode:"none",
+    const expectedDefaults = {values:newModelDefaults,mode:"none",
       enabled:Object.fromEntries(newModelKeys.map(key=>[key,false]))};
     assert.deepEqual(await readNewControls(), expectedDefaults, "Legacy project must clear previous new values and checked fit controls");
     await loadProjectFixture(refined, `refinement-${language}-roundtrip`);
@@ -463,17 +480,23 @@ try {
 
     // Exercise the UI/Worker/serializer path for each opt-in fit variable. These
     // synthetic inputs establish plumbing, not the physics of the user's sample.
+    let haloRefitFixture;
     for (const [key, target, bounds, initial] of [
       ["film_interface_width", 1.4, [0,3], 0.3],
       ["film_thickness_sigma", 1.5, [0,3], 0.4],
       ["background_slope", 0.08, [-0.15,0.15], -0.03],
+      ["resolution_halo_fraction", 0.015, [0.001,0.03], 0.003],
+      ["resolution_halo_width", 3.8, [1.2,6], 1.8],
     ]) {
+      const halo = key.startsWith("resolution_halo_");
       const synthetic = await evaluate(app(`(() => {
         const core=f.contentWindow.eval("XRDCore");
         const parameters={...core.DEFAULTS,hkl:"002",wavelength:1.11197,
           film_lattice_a:3.93,film_planes:30,substrate_planes:0,fwhm_deg:0,
           film_lattice_gradient_a:0,film_interface_width:0,film_thickness_sigma:0,
           background:0.001,background_slope:0,lp_mode:"none"};
+        if (${halo}) Object.assign(parameters,{substrate_planes:300,fwhm_deg:0.04,
+          background:1e-6,resolution_halo_fraction:0.015,resolution_halo_width:3.8});
         const angles=Array.from({length:201},(_,i)=>31+i*0.02);
         const intensity=core.simulate(angles,{...parameters,[${JSON.stringify(key)}]:${target}});
         parameters[${JSON.stringify(key)}]=${initial};
@@ -487,6 +510,7 @@ try {
           measurement_name:"synthetic-${key}.dat",measurement:{two_theta_deg:angles,intensity_raw:intensity},
           fit_settings:{range:[31,35],variables,thickness_unit:"nm",max_evaluations:400}};
       })()`));
+      if (halo) haloRefitFixture = synthetic;
       await loadProjectFixture(synthetic, `refinement-${language}-${key}-input`);
       await appClick("runFit");
       await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled &&
@@ -497,7 +521,9 @@ try {
       assert.deepEqual(Object.keys(result.fit_result.bounds), [key], `${key}: only selected fit control should be searched`);
       assert(result.fit_result.evaluations > 0 && result.fit_result.evaluations <= 400);
       assert(Number.isFinite(result.parameters[key]) && result.parameters[key]>=bounds[0] && result.parameters[key]<=bounds[1]);
-      assert(Math.abs(result.parameters[key]-initial)>0.02, `${key}: optimizer must update enabled variable`);
+      assert(Math.abs(result.parameters[key]-initial)>(key === "resolution_halo_fraction" ? 0.005 : 0.02), `${key}: optimizer must update enabled variable`);
+      if (halo) assert(Math.abs(result.parameters[key]-target) < (key === "resolution_halo_fraction" ? 0.001 : 0.1),
+        `${key}: browser Worker must recover the synthetic target`);
       assert(result.fit_result.best_fit_merit <= result.fit_result.initial_fit_merit + 1e-12);
       if (language === "en") assert(!/[가-힣]/.test(await evaluate(app(`d.getElementById("fitProgress").textContent + d.getElementById("fitResult").textContent`))));
       record(`${language}: ${key} alone completes a browser Worker fit and saves its result`,
@@ -523,7 +549,15 @@ try {
     await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled`), `${language} expensive fit cancels`, 10000);
     assert.deepEqual(await evaluate(app(`Array.from(d.querySelectorAll("#settingsForm input,#settingsForm select"),node=>[node.id,node.value,node.checked])`)), cancelledValues);
     assert.match(await evaluate(app(`d.getElementById("fitProgress").textContent`)), language === "ko" ? /중단/ : /cancel|stop/i);
-    record(`${language}: gradient, taper and thickness distribution fit cancels without changing inputs`, {elapsedMs:Date.now()-cancelStart});
+    record(`${language}: gradient, taper, thickness distribution and halo fit cancels without changing inputs`, {elapsedMs:Date.now()-cancelStart});
+    await loadProjectFixture(haloRefitFixture, `refinement-${language}-halo-after-cancel`);
+    await appClick("runFit");
+    await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled &&
+      !d.getElementById("fitResult").hidden`), `${language} halo refit after cancellation`, 60000);
+    const haloRefit = await saveCurrentProject(`refinement-${language}-halo-after-cancel-fit`);
+    assert.deepEqual(Object.keys(haloRefit.fit_result.bounds), ["resolution_halo_width"]);
+    assert(Math.abs(haloRefit.parameters.resolution_halo_width - 3.8) < 0.1);
+    record(`${language}: fresh worker refits and recovers halo width after cancelling the extended model`);
     await loadProjectFixture(baseline, `refinement-${language}-baseline-restore`);
   }
   await appClick("exportCsv");

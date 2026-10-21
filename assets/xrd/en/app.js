@@ -28,12 +28,12 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background", "background_slope"];
-const optionalModelNumbers = new Set(["film_lattice_gradient_a", "substrate_lattice_c", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
+const optionalModelDefaults = {film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
 const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background", "background_slope"];
-const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
 const fitBudgetOptions = new Set([400, 800, 1200]);
 const substrateFitMax = 30000;
@@ -152,7 +152,10 @@ function explainModelError(error) {
     return "The calculated intensity is zero here. Either lattice centering forbids the reflection you chose on this substrate (switch to an allowed one), or both the film and substrate repeat counts are zero.";
   }
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
-    return "These settings need more than the 120,000 integration steps the broadening grid allows. Narrow the 2θ calculation scan or lower the substrate coherent repeat count. Narrowing only the fit range does not help — the calculation scan has to shrink too.";
+    return "The integration grid exceeds 120,000 steps under these conditions. Reduce the 2θ calculation scan, substrate coherent repeats, or broad resolution component width multiplier m. Narrowing the fit range also requires adjusting the calculation scan.";
+  }
+  if (/Resolution halo convolution is too large/i.test(message)) {
+    return "The broad resolution component exceeds the convolution work limit. Reduce width multiplier m, FWHM, coherent repeat counts, or calculation points.";
   }
   if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
     return "The thickness-domain/taper calculation exceeds the work limit. Narrow the calculation scan or reduce thickness spread, lattice gradient, or coherent repeat counts.";
@@ -169,7 +172,7 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",film_interface_width:"Film boundary taper width w",film_thickness_sigma:"Film thickness spread σN",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",background:"Relative background",background_slope:"Log background slope",lp_mode:"Polarization / illuminated length",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
+  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",film_interface_width:"Film boundary taper width w",film_thickness_sigma:"Film thickness spread σN",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",resolution_halo_fraction:"Broad resolution component fraction f",resolution_halo_width:"Broad resolution component width multiplier m",background:"Relative background",background_slope:"Log background slope",lp_mode:"Polarization / illuminated length",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
 }
 
 function gcd3(h, k, l) {
@@ -249,9 +252,10 @@ function validateConfig(input) {
   if (substrates.size && !substrates.has(parameters.substrate_material)) throw new Error("That substrate is not supported.");
   if (!lpModes.has(parameters.lp_mode)) throw new Error("Choose a polarization / illuminated-length assumption from the list.");
   for (const key of numericParameters) {
-    const blankable = optionalModelNumbers.has(key);
-    const value = blankable && (source[key] === undefined || source[key] === "") ? 0 : source[key];
+    const blankable = Object.prototype.hasOwnProperty.call(optionalModelDefaults, key);
+    const value = blankable && (source[key] === undefined || source[key] === "") ? optionalModelDefaults[key] : source[key];
     if (value === "" || value === null || value === undefined) throw new Error(`${labelFor(key)} is missing.`);
+    if (key.startsWith("resolution_halo_") && (!["number", "string"].includes(typeof value) || typeof value === "string" && !value.trim())) throw new Error(`${labelFor(key)} must be a finite number.`);
     parameters[key] = Number(value);
     if (!Number.isFinite(parameters[key])) throw new Error(`${labelFor(key)} must be a finite number.`);
   }
@@ -275,6 +279,8 @@ function validateConfig(input) {
   if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("A film lattice gradient Δa needs at least 2 film repeats.");
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("The film or the substrate must have at least one repeat.");
   if (parameters.fwhm_deg < 0) throw new Error("The instrumental width must be 0 or more.");
+  if (parameters.resolution_halo_fraction < 0 || parameters.resolution_halo_fraction > 0.2) throw new Error("Broad resolution component fraction f must be between 0 and 0.2.");
+  if (parameters.resolution_halo_width < 1 || parameters.resolution_halo_width > 20) throw new Error("Broad resolution component width multiplier m must be between 1 and 20.");
   if (parameters.background < 0 || parameters.background >= 1) throw new Error("The relative background must be at least 0 and below 1.");
   if (parameters.film_interface_width < 0 || parameters.film_interface_width > 1000) throw new Error("Film boundary taper width w must be between 0 and 1,000 repeats.");
   if (parameters.film_thickness_sigma < 0 || parameters.film_thickness_sigma > 20) throw new Error("Film thickness spread σN must be between 0 and 20 repeats.");
@@ -440,6 +446,7 @@ function applyFitSettings(settings) {
 }
 
 function refreshFitControls() {
+  if ($("fit_enable_film_interface_width").checked) $("advancedFitVariables").open = true;
   for (const key of fitKeys) {
     const row = document.querySelector(`[data-fit-key="${key}"]`);
     row.classList.toggle("is-fixed", !$("fit_enable_" + key).checked);
@@ -463,6 +470,8 @@ function validateFitBounds(key, low, high, scan) {
   if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("Film lattice gradient Δa bounds must be within −0.20 to +0.20 Å.");
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("Zero offset bounds must be within ±5° and must keep the calculated angles inside 0–180°.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("Instrumental width bounds must be between 0 and 2°.");
+  if (key === "resolution_halo_fraction" && (low < 0 || high > 0.2)) throw new Error("Broad resolution component fraction f bounds must be between 0 and 0.2.");
+  if (key === "resolution_halo_width" && (low < 1 || high > 20)) throw new Error("Broad resolution component width multiplier m bounds must be between 1 and 20.");
   if (key === "background" && (low < 0 || high >= 1)) throw new Error("Relative background bounds must be at least 0 and below 1.");
   if (key === "film_interface_width" && (low < 0 || high > 1000)) throw new Error("Film boundary taper width w bounds must be between 0 and 1,000 repeats.");
   if (key === "film_thickness_sigma" && (low < 0 || high > 20)) throw new Error("Film thickness spread σN bounds must be between 0 and 20 repeats.");
@@ -846,7 +855,7 @@ function showFitResult(result, fit) {
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° fixed`;
-  for (const [key, id, unit] of [["film_interface_width", "fitInterfaceWidth", "repeats"], ["film_thickness_sigma", "fitThicknessSigma", "repeats"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "repeats"], ["film_thickness_sigma", "fitThicknessSigma", "repeats"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
     const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "fitted" : "fixed";
     $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
   }
@@ -866,6 +875,11 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"upper bound"});
   }
   const warnings = [];
+  const haloFraction = result.config.parameters.resolution_halo_fraction;
+  const haloWidth = result.config.parameters.resolution_halo_width;
+  if (haloFraction === 0 && fit.bounds?.resolution_halo_width) warnings.push("The broad component fraction f is zero, so width multiplier m is unconstrained. Do not interpret a fitted m under this condition.");
+  if (haloWidth === 1 && fit.bounds?.resolution_halo_fraction) warnings.push("With width multiplier m = 1, both Gaussian components are identical and fraction f is unconstrained.");
+  if (finalFwhm === 0 && (haloFraction > 0 || fit.bounds?.resolution_halo_fraction || fit.bounds?.resolution_halo_width)) warnings.push("The instrumental FWHM is zero, so the broad resolution component has no effect. Do not interpret fitted f or m values.");
   if (result.config.parameters.film_interface_width > 0 && result.config.parameters.film_thickness_sigma > 0) warnings.push("Boundary taper w and thickness spread σN are both active. They can be correlated: compare the regional residuals from fitting each separately. Neither is an independent measurement of roughness.");
   if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("The relative background is zero, so the log background slope has no effect. Do not interpret a fitted slope under this condition.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");

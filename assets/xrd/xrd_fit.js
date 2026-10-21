@@ -16,13 +16,15 @@
 const XRDFit = (() => {
   const FITTABLE = new Set(["film_lattice_a", "film_planes", "angle_offset_deg",
                             "fwhm_deg", "substrate_planes", "background",
-                            "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+                            "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope",
+                            "resolution_halo_fraction", "resolution_halo_width"]);
   const INTEGER = new Set(["film_planes", "substrate_planes"]);
   const MAX_FIT_POINTS = 1400;
   const MAX_REFERENCE_POINTS = 3001;
   const ORDER = ["film_lattice_a", "film_planes", "film_lattice_gradient_a",
                  "angle_offset_deg", "fwhm_deg", "substrate_planes", "background",
-                 "film_interface_width", "film_thickness_sigma", "background_slope"];
+                 "film_interface_width", "film_thickness_sigma", "background_slope",
+                 "resolution_halo_fraction", "resolution_halo_width"];
 
   let Core = null;
   function useCore(core) { Core = core; }
@@ -188,6 +190,8 @@ const XRDFit = (() => {
     for (const [name, pair] of Object.entries(raw)) {
       if (!FITTABLE.has(name)) throw new Error(`Parameter cannot be fitted: ${name}`);
       if (!Array.isArray(pair) || pair.length !== 2) throw new Error(`${name} bounds must have lower and upper values`);
+      if (name.startsWith("resolution_halo_") && pair.some(value => !["number", "string"].includes(typeof value)
+          || typeof value === "string" && !value.trim())) throw new Error(`${name} bounds must be finite`);
       let [low, high] = pair.map(Number);
       if (!Number.isFinite(low) || !Number.isFinite(high)) throw new Error(`${name} bounds must be finite`);
       if (low > high) throw new Error(`${name} lower bound must not exceed upper bound`);
@@ -200,6 +204,10 @@ const XRDFit = (() => {
         throw new Error("film_lattice_a bounds must be positive");
       } else if (name === "fwhm_deg" && low < 0) {
         throw new Error("fwhm_deg bounds must be nonnegative");
+      } else if (name === "resolution_halo_fraction" && (low < 0 || high > 0.2)) {
+        throw new Error("resolution_halo_fraction bounds must lie in [0, 0.2]");
+      } else if (name === "resolution_halo_width" && (low < 1 || high > 20)) {
+        throw new Error("resolution_halo_width bounds must lie in [1, 20]");
       } else if (name === "background" && (low < 0 || high >= 1)) {
         throw new Error("background bounds must lie in [0, 1)");
       } else if (name === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) {
@@ -485,6 +493,8 @@ const XRDFit = (() => {
       for (const name of names) {
         const [lo, hi] = limits[name];
         step[name] = INTEGER.has(name) ? Math.max(1, Math.round((hi - lo) * 0.1)) : (hi - lo) * 0.1;
+        if (name === "resolution_halo_fraction") step[name] = Math.min(step[name], 0.005);
+        if (name === "resolution_halo_width") step[name] = Math.min(step[name], 1);
       }
       while (evaluations < maxEvaluations) {
         let improved = false;

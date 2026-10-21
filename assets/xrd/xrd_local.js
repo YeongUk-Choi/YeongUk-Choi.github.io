@@ -25,8 +25,9 @@ window.XRDLocal = (() => {
     return response.json();
   }
 
-  function numeric(value, label) {
-    if (value === null || value === undefined || typeof value === "string" && !value.trim()) {
+  function numeric(value, label, strict = false) {
+    if (value === null || value === undefined || typeof value === "string" && !value.trim()
+        || strict && !["number", "string"].includes(typeof value)) {
       throw new Error(`${label} must be a finite number`);
     }
     const result = Number(value);
@@ -44,7 +45,10 @@ window.XRDLocal = (() => {
     for (const key of ["wavelength", "film_lattice_a", "substrate_lattice_a",
                        "substrate_lattice_c", "angle_offset_deg", "fwhm_deg", "background",
                        "film_lattice_gradient_a", "film_interface_width",
-                       "film_thickness_sigma", "background_slope"]) params[key] = numeric(params[key], key);
+                       "film_thickness_sigma", "background_slope",
+                       "resolution_halo_fraction", "resolution_halo_width"]) {
+      params[key] = numeric(params[key], key, key.startsWith("resolution_halo_"));
+    }
     for (const key of ["film_planes", "substrate_planes"]) {
       const count = numeric(params[key], key);
       const maximum = key === "substrate_planes" ? 30000 : 20000;
@@ -70,6 +74,12 @@ window.XRDLocal = (() => {
       throw new Error("substrate_lattice_c must be zero (use a) or positive");
     }
     if (params.fwhm_deg < 0) throw new Error("fwhm_deg must be nonnegative");
+    if (params.resolution_halo_fraction < 0 || params.resolution_halo_fraction > 0.2) {
+      throw new Error("resolution_halo_fraction must be within 0 to 0.2");
+    }
+    if (params.resolution_halo_width < 1 || params.resolution_halo_width > 20) {
+      throw new Error("resolution_halo_width must be within 1 to 20");
+    }
     if (params.background < 0 || params.background >= 1) {
       throw new Error("background must be between 0 (inclusive) and 1 (exclusive)");
     }
@@ -229,7 +239,8 @@ window.XRDLocal = (() => {
     }
     const allowed = new Set(["film_lattice_a", "film_planes", "angle_offset_deg", "fwhm_deg",
                              "substrate_planes", "background", "film_lattice_gradient_a",
-                             "film_interface_width", "film_thickness_sigma", "background_slope"]);
+                             "film_interface_width", "film_thickness_sigma", "background_slope",
+                             "resolution_halo_fraction", "resolution_halo_width"]);
     if (!fit.bounds || typeof fit.bounds !== "object" || Array.isArray(fit.bounds)) {
       throw new Error("fit.bounds must be an object");
     }
@@ -241,8 +252,8 @@ window.XRDLocal = (() => {
       if (!Array.isArray(interval) || interval.length !== 2) {
         throw new Error(`${key} bounds need [minimum, maximum]`);
       }
-      const minimum = numeric(interval[0], `${key} minimum`);
-      const maximum = numeric(interval[1], `${key} maximum`);
+      const minimum = numeric(interval[0], `${key} minimum`, key.startsWith("resolution_halo_"));
+      const maximum = numeric(interval[1], `${key} maximum`, key.startsWith("resolution_halo_"));
       if (minimum >= maximum) throw new Error(`${key} minimum must be less than maximum`);
       if (key === "film_lattice_a" && minimum <= 0) throw new Error(`${key} minimum must be positive`);
       if (key === "film_planes" || key === "substrate_planes") {
@@ -252,6 +263,12 @@ window.XRDLocal = (() => {
         }
       }
       if (key === "fwhm_deg" && minimum < 0) throw new Error("fwhm_deg minimum must be nonnegative");
+      if (key === "resolution_halo_fraction" && !(minimum >= 0 && maximum <= 0.2)) {
+        throw new Error("resolution_halo_fraction bounds must be in [0,0.2]");
+      }
+      if (key === "resolution_halo_width" && !(minimum >= 1 && maximum <= 20)) {
+        throw new Error("resolution_halo_width bounds must be in [1,20]");
+      }
       if (key === "background" && !(minimum >= 0 && maximum < 1)) {
         throw new Error("background bounds must be in [0,1)");
       }

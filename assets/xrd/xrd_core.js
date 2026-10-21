@@ -421,6 +421,7 @@ const XRDCore = (() => {
     wavelength: 1.5406, film_lattice_a: 3.93, substrate_lattice_a: 3.905,
     substrate_lattice_c: 0, film_planes: 50, substrate_planes: 350,
     angle_offset_deg: 0, fwhm_deg: 0.06, background: 1e-6,
+    resolution_halo_fraction: 0, resolution_halo_width: 3,
     film_lattice_gradient_a: 0,
     film_interface_width: 0, film_thickness_sigma: 0,
     lp_mode: "none", background_slope: 0,
@@ -431,7 +432,9 @@ const XRDCore = (() => {
     for (const [name, lower, upper, message] of [
       ["film_interface_width", 0, 1000, "film_interface_width must be within 0 to 1,000 repeats"],
       ["film_thickness_sigma", 0, 20, "film_thickness_sigma must be within 0 to 20 repeats"],
-      ["background_slope", -1, 1, "background_slope must be within -1 to 1 per degree"]
+      ["background_slope", -1, 1, "background_slope must be within -1 to 1 per degree"],
+      ["resolution_halo_fraction", 0, 0.2, "resolution_halo_fraction must be within 0 to 0.2"],
+      ["resolution_halo_width", 1, 20, "resolution_halo_width must be within 1 to 20"]
     ]) {
       if (!Number.isFinite(params[name]) || params[name] < lower || params[name] > upper) throw new Error(message);
     }
@@ -448,7 +451,10 @@ const XRDCore = (() => {
     const [subA, subC, subSystem] = substrateLattice(params);
     const substratePeriod = projectedRepeat(subA, hkl, subC, subSystem);
     const sigma = params.fwhm_deg / (2 * Math.sqrt(2 * Math.log(2)));
-    const endAngle = Math.min(180 - 1e-9 + params.angle_offset_deg, x[x.length - 1] + 4.5 * sigma);
+    const halo = params.resolution_halo_fraction > 0 && params.resolution_halo_width > 1;
+    let halfWidth = 4.5 * sigma;
+    if (halo) halfWidth *= params.resolution_halo_width;
+    const endAngle = Math.min(180 - 1e-9 + params.angle_offset_deg, x[x.length - 1] + halfWidth);
     const maxQ = (4 * Math.PI * Math.sin((((endAngle - params.angle_offset_deg) * 0.5) * Math.PI) / 180))
                  / params.wavelength;
     const profile = filmProfile(params, hkl, maxQ);
@@ -464,7 +470,6 @@ const XRDCore = (() => {
       checkDomainWork(domains, x.length);
       raw = x.map(intensity);
     } else {
-      const halfWidth = 4.5 * sigma;
       const start = Math.max(1e-9 + params.angle_offset_deg, x[0] - halfWidth);
       const end = Math.min(180 - 1e-9 + params.angle_offset_deg, x[x.length - 1] + halfWidth);
       const longestCount = domains.length ? Math.max(...domains.map((domain) => domain[0])) : params.film_planes;
@@ -487,6 +492,11 @@ const XRDCore = (() => {
       checkDomainWork(domains, steps + 1);
       const grid = new Float64Array(steps + 1);
       const samples = new Float64Array(steps + 1);
+      // Guard the expanded convolution before computing costly film domains.
+      // An upper bound avoids a second traversal of every angle's grid window.
+      if (halo && x.length * Math.min(steps + 1, Math.floor(2 * halfWidth / step) + 2) > 100000000) {
+        throw new Error("Resolution halo convolution is too large; reduce halo width, FWHM, coherence repeats, or scan points");
+      }
       for (let i = 0; i <= steps; i++) {
         grid[i] = start + i * step;
         samples[i] = intensity(grid[i]);
@@ -513,6 +523,13 @@ const XRDCore = (() => {
         for (let i = left; i <= right; i++) {
           const distance = (grid[i] - angle) / sigma;
           let weight = Math.exp(-0.5 * distance * distance);
+          if (halo) {
+            // f is integrated area, so the broad Gaussian's height is f/m.
+            const broadDistance = distance / params.resolution_halo_width;
+            weight = (1 - params.resolution_halo_fraction) * weight
+              + params.resolution_halo_fraction / params.resolution_halo_width
+              * Math.exp(-0.5 * broadDistance * broadDistance);
+          }
           if (i === 0 || i === steps) weight *= 0.5;
           numerator += samples[i] * weight;
           denominator += weight;

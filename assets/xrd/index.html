@@ -99,6 +99,12 @@
             <label class="field">2θ 영점 보정 (°)<input id="angle_offset_deg" name="angle_offset_deg" type="number" step="any" value="0" required></label>
             <label class="field">기구 폭 FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
           </div>
+          <div class="field-grid two">
+            <label class="field">넓은 분해능 성분 비율 f<input id="resolution_halo_fraction" name="resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0" required></label>
+            <label class="field">넓은 분해능 성분 폭 배수 m<input id="resolution_halo_width" name="resolution_halo_width" type="number" step="any" min="1" max="20" value="3" required></label>
+          </div>
+          <p class="small-note">각각 면적이 1인 두 Gaussian을 (1 − f)·G(σ) + f·G(mσ)로 섞습니다. f는 넓은 성분의 적분 비율입니다(0.005 = 0.5%). 넓은 성분의 FWHM은 위 FWHM의 m배입니다. f = 0이면 m은 효과가 없고, FWHM = 0이면 두 항목 모두 효과가 없습니다.</p>
+          <p class="small-note">이것은 분해능 모양을 기술하는 모델이며, 측정된 기구 함수가 아닙니다. 기판 회절이나 모자이크 등 다른 원인도 비슷한 모양을 만들 수 있어, 피팅 개선만으로 기구가 원인이라고 결론 내릴 수 없습니다.</p>
           <label class="field">상대 배경<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
           <label class="field">로그 배경 기울기 <span>(log₁₀/°)</span><input id="background_slope" name="background_slope" type="number" step="any" min="-1" max="1" value="0" required></label>
           <p class="small-note">기울기 0은 상수 배경입니다. 기울기가 있으면 상대 배경은 정규화 전 2θ = 33°의 값이며, b(2θ) = b(33°) × 10^[기울기 × (2θ − 33°)]로 변합니다. 합산한 곡선은 다시 정규화합니다. 상대 배경이 0이면 기울기는 효과가 없습니다.</p>
@@ -143,10 +149,6 @@
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ 영점 보정 <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ 영점 보정 하한"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ 영점 보정 상한"></div>
             </div>
-            <div class="fit-variable" data-fit-key="film_interface_width">
-              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>박막 경계 테이퍼 폭 w <small>반복 단위</small></span></label>
-              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="박막 경계 테이퍼 폭 하한"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="박막 경계 테이퍼 폭 상한"></div>
-            </div>
             <div class="fit-variable" data-fit-key="film_thickness_sigma">
               <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>박막 두께 분포 σN <small>반복 단위</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="박막 두께 분포 하한"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="박막 두께 분포 상한"></div>
@@ -154,6 +156,14 @@
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>기구 Gaussian FWHM <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="기구 폭 하한"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="기구 폭 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="resolution_halo_fraction">
+              <label class="fit-toggle"><input id="fit_enable_resolution_halo_fraction" type="checkbox"><span>넓은 분해능 성분 비율 f</span></label>
+              <div class="fit-bounds"><input id="fit_low_resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0" aria-label="넓은 분해능 성분 비율 하한"><span>–</span><input id="fit_high_resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0.02" aria-label="넓은 분해능 성분 비율 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="resolution_halo_width">
+              <label class="fit-toggle"><input id="fit_enable_resolution_halo_width" type="checkbox"><span>넓은 분해능 성분 폭 배수 m</span></label>
+              <div class="fit-bounds"><input id="fit_low_resolution_halo_width" type="number" step="any" min="1" max="20" value="1" aria-label="넓은 분해능 성분 폭 배수 하한"><span>–</span><input id="fit_high_resolution_halo_width" type="number" step="any" min="1" max="20" value="8" aria-label="넓은 분해능 성분 폭 배수 상한"></div>
             </div>
             <div class="fit-variable" data-fit-key="substrate_planes">
               <label class="fit-toggle"><input id="fit_enable_substrate_planes" type="checkbox"><span>기판 유효 간섭 반복 수 <small>정수</small></span></label>
@@ -168,6 +178,14 @@
               <div class="fit-bounds"><input id="fit_low_background_slope" type="number" step="any" min="-1" max="1" value="-0.1" aria-label="로그 배경 기울기 하한"><span>–</span><input id="fit_high_background_slope" type="number" step="any" min="-1" max="1" value="0.1" aria-label="로그 배경 기울기 상한"></div>
             </div>
           </div>
+          <details class="advanced-fit" id="advancedFitVariables">
+            <summary>고급 피팅 변수 · 경계 테이퍼</summary>
+            <div class="fit-variable" data-fit-key="film_interface_width">
+              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>박막 경계 테이퍼 폭 w <small>반복 단위</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="박막 경계 테이퍼 폭 하한"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="박막 경계 테이퍼 폭 상한"></div>
+            </div>
+            <p class="fit-hint">기준 SRO/STO 002 스캔에서는 테이퍼 폭이 0으로 수렴했습니다. 켜기 전에 근거를 확인하세요.</p>
+          </details>
           <p class="fit-hint">경계 테이퍼 w와 두께 분포 σN은 서로 비슷한 변화를 만들 수 있습니다. 각각 따로 피팅해 구간별 잔차를 비교한 다음 함께 쓸지 판단하세요. 점수 개선만으로 원인을 확정할 수 없습니다.</p>
           <p class="fit-hint">선택한 변수의 현재값이 경계 밖이면 가장 가까운 경계에서 피팅을 시작합니다. Thickness는 평균 a·hkl로 정수 반복 단위 N에 환산됩니다. Δa는 기본적으로 고정되며 피팅을 켜도 독립적으로 측정된 strain을 뜻하지 않습니다. 기판 반복 수는 최대 30,000까지 입력할 수 있지만 넓은 계산 스캔에서는 적분 한계에 닿을 수 있습니다. 기구 FWHM은 측정 피크의 전체 반치폭과 다릅니다. 반사면, 파장, 재료 배정은 사용자가 정하는 가정입니다.</p>
           <label class="field fit-budget">탐색 예산
@@ -212,6 +230,8 @@
           <div><span id="fitGradientLabel">박막 수직 격자 구배 Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">반복 단위 N (피팅)</span><strong id="fitPlanes">—</strong></div>
           <div><span>기구 Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>넓은 분해능 성분 비율 f</span><strong id="fitHaloFraction">—</strong></div>
+          <div><span>넓은 분해능 성분 폭 배수 m</span><strong id="fitHaloWidth">—</strong></div>
           <div><span>박막 경계 테이퍼 폭 w</span><strong id="fitInterfaceWidth">—</strong></div>
           <div><span>박막 두께 분포 σN</span><strong id="fitThicknessSigma">—</strong></div>
           <div><span>로그 배경 기울기</span><strong id="fitBackgroundSlope">—</strong></div>
