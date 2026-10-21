@@ -80,6 +80,11 @@
             <label class="field">기판 유효 간섭 반복 수<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
           </div>
           <p class="small-note">Δa = 표면 a − 계면 a입니다. 모델의 반사면 법선 방향 유효 격자 간격이 선형으로 변한다고 가정하며, Thickness는 평균 a로 환산합니다.</p>
+          <div class="field-grid two">
+            <label class="field">박막 경계 테이퍼 폭 w <span>(반복 단위)</span><input id="film_interface_width" name="film_interface_width" type="number" step="any" min="0" max="1000" value="0" required></label>
+            <label class="field">박막 두께 분포 σN <span>(반복 단위)</span><input id="film_thickness_sigma" name="film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" required></label>
+          </div>
+          <p class="small-note">w는 박막 양 끝의 산란 진폭을 완만하게 줄이는 경험적 테이퍼 폭입니다. σN은 서로 비간섭인 면내 영역들의 정수 두께 분포이며 강도를 평균합니다. 둘 다 0이면 기존 모델입니다. 두 값은 거칠기를 직접 측정한 값이 아니며, 먼저 하나씩 켜서 비교하세요. σN을 켜면 계산 시간이 늘어납니다.</p>
         </fieldset>
 
         <fieldset class="setting-group">
@@ -95,6 +100,20 @@
             <label class="field">기구 폭 FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
           </div>
           <label class="field">상대 배경<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
+          <label class="field">로그 배경 기울기 <span>(log₁₀/°)</span><input id="background_slope" name="background_slope" type="number" step="any" min="-1" max="1" value="0" required></label>
+          <p class="small-note">기울기 0은 상수 배경입니다. 기울기가 있으면 상대 배경은 정규화 전 2θ = 33°의 값이며, b(2θ) = b(33°) × 10^[기울기 × (2θ − 33°)]로 변합니다. 합산한 곡선은 다시 정규화합니다. 상대 배경이 0이면 기울기는 효과가 없습니다.</p>
+          <label class="field">편광·조사 길이 가정
+            <select id="lp_mode" name="lp_mode">
+              <option value="none" selected>적용 안 함 (기본)</option>
+              <option value="synchrotron_vertical">편광만 · 수직 산란면 (P = 1)</option>
+              <option value="synchrotron_horizontal">편광만 · 수평 산란면 (P = cos²2θ)</option>
+              <option value="lab_unpolarized">편광만 · 비편광 선원 (P = (1 + cos²2θ)/2)</option>
+              <option value="synchrotron_vertical_footprint">편광 + 조사 길이 · 수직 산란면</option>
+              <option value="synchrotron_horizontal_footprint">편광 + 조사 길이 · 수평 산란면</option>
+              <option value="lab_unpolarized_footprint">편광 + 조사 길이 · 비편광 선원</option>
+            </select>
+          </label>
+          <p class="small-note">수직·수평은 산란면 방향이며, 입사광은 완전히 수평 편광되었다고 가정합니다. 조사 길이 옵션은 추가로 1/sinθ를 곱하며, 고정된 입사 빔이 시료 안에 전부 들어오는 경우만 가정합니다. 실제 기하·편광·빔 크기를 확인하세요. 이미 보정한 데이터에는 중복 적용하지 마세요.</p>
         </fieldset>
 
         <fieldset class="setting-group fitting-group">
@@ -124,6 +143,14 @@
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ 영점 보정 <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ 영점 보정 하한"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ 영점 보정 상한"></div>
             </div>
+            <div class="fit-variable" data-fit-key="film_interface_width">
+              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>박막 경계 테이퍼 폭 w <small>반복 단위</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="박막 경계 테이퍼 폭 하한"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="박막 경계 테이퍼 폭 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_thickness_sigma">
+              <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>박막 두께 분포 σN <small>반복 단위</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="박막 두께 분포 하한"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="박막 두께 분포 상한"></div>
+            </div>
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>기구 Gaussian FWHM <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="기구 폭 하한"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="기구 폭 상한"></div>
@@ -136,7 +163,12 @@
               <label class="fit-toggle"><input id="fit_enable_background" type="checkbox"><span>상대 배경</span></label>
               <div class="fit-bounds"><input id="fit_low_background" type="number" step="any" value="0" aria-label="상대 배경 하한"><span>–</span><input id="fit_high_background" type="number" step="any" value="0.01" aria-label="상대 배경 상한"></div>
             </div>
+            <div class="fit-variable" data-fit-key="background_slope">
+              <label class="fit-toggle"><input id="fit_enable_background_slope" type="checkbox"><span>로그 배경 기울기 <small>log₁₀/°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_background_slope" type="number" step="any" min="-1" max="1" value="-0.1" aria-label="로그 배경 기울기 하한"><span>–</span><input id="fit_high_background_slope" type="number" step="any" min="-1" max="1" value="0.1" aria-label="로그 배경 기울기 상한"></div>
+            </div>
           </div>
+          <p class="fit-hint">경계 테이퍼 w와 두께 분포 σN은 서로 비슷한 변화를 만들 수 있습니다. 각각 따로 피팅해 구간별 잔차를 비교한 다음 함께 쓸지 판단하세요. 점수 개선만으로 원인을 확정할 수 없습니다.</p>
           <p class="fit-hint">선택한 변수의 현재값이 경계 밖이면 가장 가까운 경계에서 피팅을 시작합니다. Thickness는 평균 a·hkl로 정수 반복 단위 N에 환산됩니다. Δa는 기본적으로 고정되며 피팅을 켜도 독립적으로 측정된 strain을 뜻하지 않습니다. 기판 반복 수는 최대 30,000까지 입력할 수 있지만 넓은 계산 스캔에서는 적분 한계에 닿을 수 있습니다. 기구 FWHM은 측정 피크의 전체 반치폭과 다릅니다. 반사면, 파장, 재료 배정은 사용자가 정하는 가정입니다.</p>
           <label class="field fit-budget">탐색 예산
             <select id="fit_evaluations"><option value="400" selected>기본 · 최대 400회 평가</option><option value="800">정밀 · 최대 800회 평가</option><option value="1200">확대 · 최대 1,200회 평가</option></select>
@@ -180,6 +212,10 @@
           <div><span id="fitGradientLabel">박막 수직 격자 구배 Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">반복 단위 N (피팅)</span><strong id="fitPlanes">—</strong></div>
           <div><span>기구 Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>박막 경계 테이퍼 폭 w</span><strong id="fitInterfaceWidth">—</strong></div>
+          <div><span>박막 두께 분포 σN</span><strong id="fitThicknessSigma">—</strong></div>
+          <div><span>로그 배경 기울기</span><strong id="fitBackgroundSlope">—</strong></div>
+          <div><span>편광·조사 길이 가정</span><strong id="fitLpMode">—</strong></div>
           <div><span>피크 반치폭 · 측정 → 계산</span><strong id="fitPeakFwhm">—</strong></div>
           <div><span>로그 RMSE</span><strong id="fitError">—</strong></div>
         </div>

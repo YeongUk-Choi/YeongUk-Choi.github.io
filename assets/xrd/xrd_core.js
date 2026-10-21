@@ -139,8 +139,8 @@ const XRDCore = (() => {
   }
 
   // ---- film with a vertical lattice ramp --------------------------------
-  function filmProfile(params, hkl, maxQ) {
-    const count = params.film_planes;
+  function filmProfile(params, hkl, maxQ, filmCount = null) {
+    const count = filmCount === null ? params.film_planes : filmCount;
     const gradient = params.film_lattice_gradient_a;
     if (!gradient || count < 2) return [];
     const projection = projectedRepeat(1, hkl);
@@ -183,23 +183,24 @@ const XRDCore = (() => {
     return [vr, vi];
   }
 
-  function gradientFilmAmplitude(q, s, params, hkl, profile, oxygenFactor) {
+  function gradientFilmAmplitude(q, s, params, hkl, profile, oxygenFactor, filmCount = null) {
+    const count = filmCount === null ? params.film_planes : filmCount;
     const sites = DATA.film_sites[params.film_material];
     const coefficients = filmBasisCoefficients(hkl,
       atomicScatteringFactor(sites[0], s), atomicScatteringFactor(sites[1], s), oxygenFactor);
     const [h, k, l] = hkl;
     const halfFactor = q / (2 * Math.sqrt(h * h + k * k + l * l));
     let ar = 0, ai = 0;
-    if (profile.length === params.film_planes) {
+    if (profile.length === count) {
       const firstA = profile[0][2];
-      const deltaA = params.film_lattice_gradient_a / (params.film_planes - 1);
+      const deltaA = params.film_lattice_gradient_a / (count - 1);
       let [hpr, hpi] = cExpI(halfFactor * firstA);
       const [hsr, hsi] = cExpI(halfFactor * deltaA);
       const projected = projectedRepeat(1, hkl);
       let [cpr, cpi] = cExpI(q * projected * firstA);
       const [csr, csi] = cExpI(q * projected * deltaA);
       let [opr, opi] = [1, 0];
-      for (let i = 0; i < params.film_planes; i++) {
+      for (let i = 0; i < count; i++) {
         const [br, bi] = filmBasisFromPhase(hpr, hpi, coefficients);
         const [tr, ti] = cMul(opr, opi, br, bi);
         ar += tr; ai += ti;
@@ -219,6 +220,162 @@ const XRDCore = (() => {
       ar += m2r; ai += m2i;
     }
     return [ar, ai];
+  }
+
+  function thicknessDistribution(count, sigma) {
+    // Gaussian width in repeat units; integer sampling/truncation changes moments.
+    if (sigma < 0.02 || count === 0) return [[count, 1]];
+    const radius = Math.max(1, Math.ceil(4 * sigma));
+    const weighted = [];
+    let total = 0;
+    for (let n = Math.max(0, count - radius); n <= count + radius; n++) {
+      const weight = Math.exp(-0.5 * ((n - count) / sigma) ** 2);
+      weighted.push([n, weight]); total += weight;
+    }
+    return weighted.filter((item) => item[1] > 0).map(([n, weight]) => [n, weight / total]);
+  }
+
+  function taperSegments(count, width) {
+    // Exact finite Fourier expansion of the two sine-squared amplitude ramps.
+    if (count === 0) return [];
+    if (width <= 0.5) return [[0, count, [[0, 1, 0]]]];
+    const edge = Math.min(count, Math.max(0, Math.ceil(width - 0.5)));
+    const breaks = [...new Set([0, edge, count - edge, count])].sort((a, b) => a - b);
+    const frequency = Math.PI / width;
+    const result = [];
+    for (let i = 0; i < breaks.length - 1; i++) {
+      const start = breaks[i], end = breaks[i + 1];
+      let coefficients = new Map([[0, [1, 0]]]);
+      const ramps = [];
+      if (start < edge) {
+        const [cr, ci] = cExpI(0.5 * frequency);
+        ramps.push([[0, 0.5, 0], [1, -0.25 * cr, -0.25 * ci], [-1, -0.25 * cr, 0.25 * ci]]);
+      }
+      if (start >= count - edge) {
+        const [cr, ci] = cExpI(frequency * (count - 0.5));
+        ramps.push([[0, 0.5, 0], [1, -0.25 * cr, 0.25 * ci], [-1, -0.25 * cr, -0.25 * ci]]);
+      }
+      for (const ramp of ramps) {
+        const product = new Map();
+        for (const [first, [cr, ci]] of coefficients) {
+          for (const [second, fr, fi] of ramp) {
+            const [pr, pi] = cMul(cr, ci, fr, fi);
+            const previous = product.get(first + second) || [0, 0];
+            product.set(first + second, [previous[0] + pr, previous[1] + pi]);
+          }
+        }
+        coefficients = product;
+      }
+      result.push([start, end, [...coefficients].sort((a, b) => a[0] - b[0])
+        .map(([index, [cr, ci]]) => [index * frequency, cr, ci])]);
+    }
+    return result;
+  }
+
+  function taperedProfile(count, period, latticeA, profile, width) {
+    const source = profile.length ? profile : width > 2 * count && count <= 256
+      ? Array.from({length: count}, (_, n) => [n * period, period, latticeA, 1]) : [[0, period, latticeA, count]];
+    const ramps = taperSegments(count, width);
+    const result = [];
+    let cellStart = 0;
+    for (const [origin, localPeriod, localA, cells] of source) {
+      for (const [lower, upper, coefficients] of ramps) {
+        const start = Math.max(cellStart, lower), end = Math.min(cellStart + cells, upper);
+        if (start >= end) continue;
+        let shifted;
+        if (end - start === 1) {
+          const left = width ? Math.min(1, (start + 0.5) / width) : 1;
+          const right = width ? Math.min(1, (count - start - 0.5) / width) : 1;
+          const weight = Math.sin(Math.PI * left / 2) ** 2 * Math.sin(Math.PI * right / 2) ** 2;
+          shifted = [[0, weight, 0]];
+        } else {
+          shifted = coefficients.map(([frequency, cr, ci]) => {
+            const [pr, pi] = cExpI(frequency * start);
+            const [fr, fi] = cMul(cr, ci, pr, pi);
+            return [frequency, fr, fi];
+          });
+        }
+        result.push([origin + (start - cellStart) * localPeriod, localPeriod,
+                     localA, end - start, shifted]);
+      }
+      cellStart += cells;
+    }
+    return result;
+  }
+
+  function prepareDomains(params, hkl, maxQ, filmPeriod) {
+    const domains = [];
+    let cost = 0;
+    for (const [count, weight] of thicknessDistribution(params.film_planes, params.film_thickness_sigma)) {
+      const profile = filmProfile(params, hkl, maxQ, count);
+      const tapered = params.film_interface_width && count
+        ? taperedProfile(count, filmPeriod, params.film_lattice_a, profile, params.film_interface_width) : [];
+      cost += tapered.length ? tapered.reduce((sum, piece) => sum + piece[4].length, 0) : Math.max(1, profile.length);
+      domains.push([count, weight, profile, tapered]);
+    }
+    if (cost > 20000) throw new Error("Film domain/taper calculation is too large; reduce thickness spread, lattice gradient, or film repeats");
+    return domains;
+  }
+
+  function lpFactor(twoTheta, mode) {
+    // Ideal polarization only. Optional footprint assumes fixed beam width fully
+    // contained on the sample. No Lorentz or spectral doublet factor is applied.
+    if (mode === "none") return 1;
+    const angle = twoTheta * Math.PI / 180;
+    const baseMode = mode.replace(/_footprint$/, "");
+    const polarization = baseMode === "synchrotron_vertical" ? 1
+      : baseMode === "synchrotron_horizontal" ? Math.cos(angle) ** 2 : (1 + Math.cos(angle) ** 2) / 2;
+    return mode.endsWith("_footprint") ? polarization / Math.sin(angle / 2) : polarization;
+  }
+
+  function checkDomainWork(domains, samples) {
+    const cost = domains.reduce((sum, [, , profile, tapered]) => sum + (tapered.length
+      ? tapered.reduce((subtotal, piece) => subtotal + piece[4].length, 0) : Math.max(1, profile.length)), 0);
+    if (cost * samples > 100000000) throw new Error("Film domain/taper integration is too large; narrow the scan or reduce thickness spread, lattice gradient, or coherence repeats");
+  }
+
+  function domainIntensity(twoTheta, params, hkl, filmPeriod, substratePeriod, domains) {
+    const theta = (twoTheta - params.angle_offset_deg) * 0.5 * Math.PI / 180;
+    const s = Math.sin(theta) / params.wavelength, q = 4 * Math.PI * s;
+    const oxygenFactor = atomicScatteringFactor("O", s);
+    let sr = 0, si = 0;
+    if (params.substrate_planes) {
+      const [fr, fi] = substrateAmplitude(q, s, params, hkl, oxygenFactor);
+      const [pr, pi] = cExpI(-q * substratePeriod);
+      const [gr, gi] = geometricSum(-q * substratePeriod, params.substrate_planes);
+      const [tr, ti] = cMul(fr, fi, pr, pi);
+      [sr, si] = cMul(tr, ti, gr, gi);
+    }
+    const [aElement, bElement] = DATA.film_sites[params.film_material];
+    const filmBasis = basisAmplitude(q, s, params.film_lattice_a, hkl, aElement, bElement, oxygenFactor);
+    let intensity = 0;
+    for (const [count, weight, profile, tapered] of domains) {
+      let ar = 0, ai = 0;
+      if (tapered.length) {
+        for (const [origin, period, localA, cells, factors] of tapered) {
+          const [fr, fi] = profile.length
+            ? basisAmplitude(q, s, localA, hkl, aElement, bElement, oxygenFactor) : filmBasis;
+          let wr = 0, wi = 0;
+          for (const [frequency, cr, ci] of factors) {
+            const [gr, gi] = geometricSum(q * period + frequency, cells);
+            const [tr, ti] = cMul(cr, ci, gr, gi);
+            wr += tr; wi += ti;
+          }
+          const [pr, pi] = cExpI(q * origin);
+          const [tr, ti] = cMul(fr, fi, pr, pi);
+          const [vr, vi] = cMul(tr, ti, wr, wi);
+          ar += vr; ai += vi;
+        }
+      } else if (profile.length) {
+        [ar, ai] = gradientFilmAmplitude(q, s, params, hkl, profile, oxygenFactor, count);
+      } else if (count) {
+        const [gr, gi] = geometricSum(q * filmPeriod, count);
+        [ar, ai] = cMul(filmBasis[0], filmBasis[1], gr, gi);
+      }
+      ar += sr; ai += si;
+      intensity += weight * (ar * ar + ai * ai);
+    }
+    return intensity;
   }
 
   function unbroadenedIntensity(twoTheta, params, hkl, filmPeriod, substratePeriod, profile) {
@@ -265,10 +422,23 @@ const XRDCore = (() => {
     substrate_lattice_c: 0, film_planes: 50, substrate_planes: 350,
     angle_offset_deg: 0, fwhm_deg: 0.06, background: 1e-6,
     film_lattice_gradient_a: 0,
+    film_interface_width: 0, film_thickness_sigma: 0,
+    lp_mode: "none", background_slope: 0,
   };
 
   function simulate(angles, rawParams) {
     const params = Object.assign({}, DEFAULTS, rawParams);
+    for (const [name, lower, upper, message] of [
+      ["film_interface_width", 0, 1000, "film_interface_width must be within 0 to 1,000 repeats"],
+      ["film_thickness_sigma", 0, 20, "film_thickness_sigma must be within 0 to 20 repeats"],
+      ["background_slope", -1, 1, "background_slope must be within -1 to 1 per degree"]
+    ]) {
+      if (!Number.isFinite(params[name]) || params[name] < lower || params[name] > upper) throw new Error(message);
+    }
+    if (!["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized",
+      "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"].includes(params.lp_mode)) {
+      throw new Error("Unsupported lp_mode");
+    }
     const x = angles;
     if (x[0] - params.angle_offset_deg <= 0 || x[x.length - 1] - params.angle_offset_deg >= 180) {
       throw new Error("Angle offset moves the scan outside the physical 0–180° range");
@@ -282,14 +452,23 @@ const XRDCore = (() => {
     const maxQ = (4 * Math.PI * Math.sin((((endAngle - params.angle_offset_deg) * 0.5) * Math.PI) / 180))
                  / params.wavelength;
     const profile = filmProfile(params, hkl, maxQ);
+    const extendedFilm = params.film_interface_width !== 0 || params.film_thickness_sigma !== 0;
+    const domains = extendedFilm ? prepareDomains(params, hkl, maxQ, filmPeriod) : [];
+    const intensity = (angle) => {
+      const value = extendedFilm ? domainIntensity(angle, params, hkl, filmPeriod, substratePeriod, domains)
+        : unbroadenedIntensity(angle, params, hkl, filmPeriod, substratePeriod, profile);
+      return value * lpFactor(angle - params.angle_offset_deg, params.lp_mode);
+    };
     let raw;
     if (sigma === 0) {
-      raw = x.map((angle) => unbroadenedIntensity(angle, params, hkl, filmPeriod, substratePeriod, profile));
+      checkDomainWork(domains, x.length);
+      raw = x.map(intensity);
     } else {
       const halfWidth = 4.5 * sigma;
       const start = Math.max(1e-9 + params.angle_offset_deg, x[0] - halfWidth);
       const end = Math.min(180 - 1e-9 + params.angle_offset_deg, x[x.length - 1] + halfWidth);
-      const coherentThickness = Math.max(params.film_planes * filmPeriod,
+      const longestCount = domains.length ? Math.max(...domains.map((domain) => domain[0])) : params.film_planes;
+      const coherentThickness = Math.max(longestCount * filmPeriod,
                                          params.substrate_planes * substratePeriod);
       const cosTheta = Math.cos((Math.max(0, start - params.angle_offset_deg) * 0.5 * Math.PI) / 180);
       const fringeStep = ((params.wavelength / (coherentThickness * cosTheta)) * 180) / Math.PI / 6;
@@ -305,11 +484,12 @@ const XRDCore = (() => {
         throw new Error(`Gaussian broadening needs ${steps.toLocaleString("en")} integration steps (limit: 120,000). ${advice}`);
       }
       const step = (end - start) / steps;
+      checkDomainWork(domains, steps + 1);
       const grid = new Float64Array(steps + 1);
       const samples = new Float64Array(steps + 1);
       for (let i = 0; i <= steps; i++) {
         grid[i] = start + i * step;
-        samples[i] = unbroadenedIntensity(grid[i], params, hkl, filmPeriod, substratePeriod, profile);
+        samples[i] = intensity(grid[i]);
       }
       raw = new Array(x.length);
       for (let n = 0; n < x.length; n++) {
@@ -346,6 +526,13 @@ const XRDCore = (() => {
       throw new Error("The selected scan contains no finite diffraction intensity");
     }
     const floor = params.background;
+    if (params.background_slope !== 0 && floor !== 0) {
+      const mixed = raw.map((value, index) => (1 - floor) * value / peak
+        + floor * 10 ** (params.background_slope * (x[index] - 33)));
+      let combinedPeak = -Infinity;
+      for (const value of mixed) if (value > combinedPeak) combinedPeak = value;
+      return mixed.map((value) => Math.max(1e-12, value / combinedPeak));
+    }
     return raw.map((value) => {
       const scaled = value / peak;
       const withFloor = scaled * (1 - floor) + floor;
@@ -355,6 +542,7 @@ const XRDCore = (() => {
 
   return {useData, parseHkl, dSpacing, braggAngle, projectedRepeat, reflectionAbsent,
           atomicScatteringFactor, simulate, substrateLattice, DEFAULTS,
+          thicknessDistribution, lpFactor,
           get data() { return DATA; }};
 })();
 

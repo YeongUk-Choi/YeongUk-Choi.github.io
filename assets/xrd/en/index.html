@@ -80,6 +80,11 @@
             <label class="field">Substrate coherent repeats<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
           </div>
           <p class="small-note">Δa = surface a − interface a. The model assumes the effective lattice spacing along the reflection normal changes linearly, and the thickness is converted using the mean a.</p>
+          <div class="field-grid two">
+            <label class="field">Film boundary taper width w <span>(repeats)</span><input id="film_interface_width" name="film_interface_width" type="number" step="any" min="0" max="1000" value="0" required></label>
+            <label class="field">Film thickness spread σN <span>(repeats)</span><input id="film_thickness_sigma" name="film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" required></label>
+          </div>
+          <p class="small-note">w is an empirical taper width that smoothly reduces the scattering amplitude at both film boundaries. σN describes a discrete thickness distribution across mutually incoherent lateral regions; their intensities are averaged. Both zero retains the original model. Neither directly measures roughness. Compare them one at a time first. Enabling σN increases calculation time.</p>
         </fieldset>
 
         <fieldset class="setting-group">
@@ -95,6 +100,20 @@
             <label class="field">instrumental FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
           </div>
           <label class="field">Relative background<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
+          <label class="field">Log background slope <span>(log₁₀/°)</span><input id="background_slope" name="background_slope" type="number" step="any" min="-1" max="1" value="0" required></label>
+          <p class="small-note">Zero slope gives a constant background. With a slope, the relative background is its value at 2θ = 33° before normalization: b(2θ) = b(33°) × 10^[slope × (2θ − 33°)]. The combined curve is normalized again. A zero relative background makes the slope ineffective.</p>
+          <label class="field">Polarization / illuminated length
+            <select id="lp_mode" name="lp_mode">
+              <option value="none" selected>None (default)</option>
+              <option value="synchrotron_vertical">Polarization only · vertical scattering plane (P = 1)</option>
+              <option value="synchrotron_horizontal">Polarization only · horizontal scattering plane (P = cos²2θ)</option>
+              <option value="lab_unpolarized">Polarization only · unpolarized source (P = (1 + cos²2θ)/2)</option>
+              <option value="synchrotron_vertical_footprint">Polarization + illuminated length · vertical plane</option>
+              <option value="synchrotron_horizontal_footprint">Polarization + illuminated length · horizontal plane</option>
+              <option value="lab_unpolarized_footprint">Polarization + illuminated length · unpolarized source</option>
+            </select>
+          </label>
+          <p class="small-note">Vertical and horizontal refer to the scattering plane, assuming a fully horizontally polarized incident beam. Illuminated-length options also multiply by 1/sinθ and assume a fixed incident beam fully contained within the sample. Check your geometry, polarization and beam dimensions. Do not reapply corrections already present in the data.</p>
         </fieldset>
 
         <fieldset class="setting-group fitting-group">
@@ -124,6 +143,14 @@
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ zero offset <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ zero offset lower bound"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ zero offset upper bound"></div>
             </div>
+            <div class="fit-variable" data-fit-key="film_interface_width">
+              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>Film boundary taper width w <small>repeats</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="Film boundary taper width lower bound"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="Film boundary taper width upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_thickness_sigma">
+              <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>Film thickness spread σN <small>repeats</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="Film thickness spread lower bound"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="Film thickness spread upper bound"></div>
+            </div>
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>Instrumental Gaussian FWHM <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="instrumental width lower bound"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="instrumental width upper bound"></div>
@@ -136,7 +163,12 @@
               <label class="fit-toggle"><input id="fit_enable_background" type="checkbox"><span>Relative background</span></label>
               <div class="fit-bounds"><input id="fit_low_background" type="number" step="any" value="0" aria-label="relative background lower bound"><span>–</span><input id="fit_high_background" type="number" step="any" value="0.01" aria-label="relative background upper bound"></div>
             </div>
+            <div class="fit-variable" data-fit-key="background_slope">
+              <label class="fit-toggle"><input id="fit_enable_background_slope" type="checkbox"><span>Log background slope <small>log₁₀/°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_background_slope" type="number" step="any" min="-1" max="1" value="-0.1" aria-label="Log background slope lower bound"><span>–</span><input id="fit_high_background_slope" type="number" step="any" min="-1" max="1" value="0.1" aria-label="Log background slope upper bound"></div>
+            </div>
           </div>
+          <p class="fit-hint">Boundary taper w and thickness spread σN can produce similar changes. Fit them separately and compare regional residuals before using both. A better score alone does not establish the cause.</p>
           <p class="fit-hint">If a selected parameter starts outside its bounds, the fit begins at the nearest bound. Thickness is converted to an integer repeat count N using the mean a and the hkl. Δa is fixed by default, and fitting it does not make it an independently measured strain. The substrate repeat count accepts up to 30,000, but a wide calculation scan can reach the integration limit. The instrumental FWHM is not the full width of the measured peak. The reflection, the wavelength and the material are assumptions you are making.</p>
           <label class="field fit-budget">Search budget
             <select id="fit_evaluations"><option value="400" selected>standard · up to 400 evaluations</option><option value="800">fine · up to 800 evaluations</option><option value="1200">extended · up to 1,200 evaluations</option></select>
@@ -180,6 +212,10 @@
           <div><span id="fitGradientLabel">Film out-of-plane lattice gradient Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">Repeats N (fitted)</span><strong id="fitPlanes">—</strong></div>
           <div><span>Instrumental Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>Film boundary taper width w</span><strong id="fitInterfaceWidth">—</strong></div>
+          <div><span>Film thickness spread σN</span><strong id="fitThicknessSigma">—</strong></div>
+          <div><span>Log background slope</span><strong id="fitBackgroundSlope">—</strong></div>
+          <div><span>Polarization / illuminated length</span><strong id="fitLpMode">—</strong></div>
           <div><span>Peak FWHM · measured → calculated</span><strong id="fitPeakFwhm">—</strong></div>
           <div><span>log RMSE</span><strong id="fitError">—</strong></div>
         </div>
