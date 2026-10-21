@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="XRD Studio">
+  <rect width="64" height="64" rx="14" fill="#14243d"/>
+  <!-- film fringes either side of the substrate peak: what a thin-film scan looks like -->
+  <path d="M7 47 q3 -2 5 1 q3 -5 5 2 q3 -8 5 3 L25 48 L32 13 L39 48 q3 -11 5 -3 q3 -7 5 2 q3 -3 5 -1"
+        fill="none" stroke="#5b9bf5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="13" r="3.4" fill="#e5753b"/>
+</svg>

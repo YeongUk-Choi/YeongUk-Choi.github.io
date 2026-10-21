@@ -1,0 +1,498 @@
+{
+ "form_factors": {
+  "Al": [
+   6.4202,
+   3.0387,
+   1.9002,
+   0.7426,
+   1.5936,
+   31.5472,
+   1.9646,
+   85.0886,
+   1.1151
+  ],
+  "Ba": [
+   20.3361,
+   3.216,
+   19.297,
+   0.2756,
+   10.888,
+   20.2073,
+   2.6959,
+   167.202,
+   2.7731
+  ],
+  "La": [
+   20.578,
+   2.94817,
+   19.599,
+   0.244475,
+   11.3727,
+   18.7726,
+   3.28719,
+   133.124,
+   2.14678
+  ],
+  "Mn": [
+   11.2819,
+   5.3409,
+   7.3573,
+   0.3432,
+   3.0193,
+   17.8674,
+   2.2441,
+   83.7543,
+   1.0896
+  ],
+  "Ni": [
+   12.8376,
+   3.8785,
+   7.292,
+   0.2565,
+   4.4438,
+   12.1763,
+   2.38,
+   66.3421,
+   1.0341
+  ],
+  "O": [
+   3.0485,
+   13.2771,
+   2.2868,
+   5.7011,
+   1.5463,
+   0.3239,
+   0.867,
+   32.9089,
+   0.2508
+  ],
+  "Ru": [
+   19.2674,
+   0.80852,
+   12.9182,
+   8.43467,
+   4.86337,
+   24.7997,
+   1.56756,
+   94.2928,
+   5.37874
+  ],
+  "Sr": [
+   17.5663,
+   1.5564,
+   9.8184,
+   14.0988,
+   5.422,
+   0.1664,
+   2.6694,
+   132.376,
+   2.5064
+  ],
+  "Ti": [
+   9.7595,
+   7.8508,
+   7.3558,
+   0.5,
+   1.6991,
+   35.6338,
+   1.9021,
+   116.105,
+   1.2807
+  ],
+  "V": [
+   10.2971,
+   6.8657,
+   7.3511,
+   0.4385,
+   2.0703,
+   26.8938,
+   2.0571,
+   102.478,
+   1.2199
+  ]
+ },
+ "film_sites": {
+  "SrRuO3": [
+   "Sr",
+   "Ru"
+  ],
+  "SrTiO3": [
+   "Sr",
+   "Ti"
+  ],
+  "BaTiO3": [
+   "Ba",
+   "Ti"
+  ],
+  "LaAlO3": [
+   "La",
+   "Al"
+  ],
+  "LaMnO3": [
+   "La",
+   "Mn"
+  ],
+  "LaNiO3": [
+   "La",
+   "Ni"
+  ],
+  "SrVO3": [
+   "Sr",
+   "V"
+  ]
+ },
+ "basis": [
+  [
+   "A",
+   0.0,
+   0.0,
+   0.0
+  ],
+  [
+   "B",
+   0.5,
+   0.5,
+   0.5
+  ],
+  [
+   "O",
+   0.5,
+   0.5,
+   0.0
+  ],
+  [
+   "O",
+   0.5,
+   0.0,
+   0.5
+  ],
+  [
+   "O",
+   0.0,
+   0.5,
+   0.5
+  ]
+ ],
+ "substrates": {
+  "SrTiO3": {
+   "label": "SrTiO₃ (STO)",
+   "system": "cubic",
+   "a": 3.905,
+   "basis": "perovskite",
+   "sites": [
+    "Sr",
+    "Ti"
+   ],
+   "suggest": "001"
+  },
+  "LaAlO3": {
+   "label": "LaAlO₃ (LAO)",
+   "system": "cubic",
+   "a": 3.789,
+   "basis": "perovskite",
+   "sites": [
+    "La",
+    "Al"
+   ],
+   "suggest": "001",
+   "note": "pseudo-cubic (rhombohedral R-3c)"
+  },
+  "LaNiO3": {
+   "label": "LaNiO₃ (LNO)",
+   "system": "cubic",
+   "a": 3.838,
+   "basis": "perovskite",
+   "sites": [
+    "La",
+    "Ni"
+   ],
+   "suggest": "001",
+   "note": "pseudo-cubic"
+  },
+  "LaMnO3": {
+   "label": "LaMnO₃ (LMO)",
+   "system": "cubic",
+   "a": 3.934,
+   "basis": "perovskite",
+   "sites": [
+    "La",
+    "Mn"
+   ],
+   "suggest": "001",
+   "note": "pseudo-cubic"
+  },
+  "BaTiO3": {
+   "label": "BaTiO₃ (BTO)",
+   "system": "tetragonal",
+   "a": 3.992,
+   "c": 4.036,
+   "basis": "perovskite",
+   "sites": [
+    "Ba",
+    "Ti"
+   ],
+   "suggest": "001",
+   "note": "tetragonal at room temperature"
+  },
+  "LSAT": {
+   "label": "(LaAlO₃)₀.₃(Sr₂AlTaO₆)₀.₇ (LSAT)",
+   "system": "cubic",
+   "a": 3.868,
+   "basis": "lattice",
+   "electrons": 108,
+   "suggest": "001"
+  },
+  "KTaO3": {
+   "label": "KTaO₃ (KTO)",
+   "system": "cubic",
+   "a": 3.989,
+   "basis": "lattice",
+   "electrons": 116,
+   "suggest": "001"
+  },
+  "LaGaO3": {
+   "label": "LaGaO₃ (LGO)",
+   "system": "cubic",
+   "a": 3.892,
+   "basis": "lattice",
+   "electrons": 112,
+   "suggest": "001",
+   "note": "pseudo-cubic"
+  },
+  "NdGaO3": {
+   "label": "NdGaO₃ (NGO)",
+   "system": "cubic",
+   "a": 3.858,
+   "basis": "lattice",
+   "electrons": 115,
+   "suggest": "001",
+   "note": "pseudo-cubic (orthorhombic Pbnm)"
+  },
+  "DyScO3": {
+   "label": "DyScO₃ (DSO)",
+   "system": "cubic",
+   "a": 3.944,
+   "basis": "lattice",
+   "electrons": 111,
+   "suggest": "001",
+   "note": "pseudo-cubic"
+  },
+  "TbScO3": {
+   "label": "TbScO₃ (TSO)",
+   "system": "cubic",
+   "a": 3.955,
+   "basis": "lattice",
+   "electrons": 110,
+   "suggest": "110",
+   "note": "pseudo-cubic"
+  },
+  "GdScO3": {
+   "label": "GdScO₃ (GSO)",
+   "system": "cubic",
+   "a": 3.966,
+   "basis": "lattice",
+   "electrons": 109,
+   "suggest": "110",
+   "note": "pseudo-cubic"
+  },
+  "SmScO3": {
+   "label": "SmScO₃ (SSO)",
+   "system": "cubic",
+   "a": 3.987,
+   "basis": "lattice",
+   "electrons": 107,
+   "suggest": "110",
+   "note": "pseudo-cubic"
+  },
+  "NdScO3": {
+   "label": "NdScO₃ (NSO)",
+   "system": "cubic",
+   "a": 4.001,
+   "basis": "lattice",
+   "electrons": 105,
+   "suggest": "110",
+   "note": "pseudo-cubic"
+  },
+  "YAlO3": {
+   "label": "YAlO₃ (YAP)",
+   "system": "cubic",
+   "a": 3.71,
+   "basis": "lattice",
+   "electrons": 78,
+   "suggest": "001",
+   "note": "pseudo-cubic"
+  },
+  "SrLaAlO4": {
+   "label": "SrLaAlO₄ (LSAO)",
+   "system": "tetragonal",
+   "a": 3.754,
+   "c": 12.636,
+   "basis": "lattice",
+   "electrons": 109,
+   "suggest": "001"
+  },
+  "SrLaGaO4": {
+   "label": "SrLaGaO₄ (LSGO)",
+   "system": "tetragonal",
+   "a": 3.843,
+   "c": 12.68,
+   "basis": "lattice",
+   "electrons": 126,
+   "suggest": "001"
+  },
+  "MgO": {
+   "label": "MgO (magnesia)",
+   "system": "cubic",
+   "a": 4.212,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 20,
+   "suggest": "002"
+  },
+  "MgAl2O4": {
+   "label": "MgAl₂O₄ (spinel)",
+   "system": "cubic",
+   "a": 8.083,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 276,
+   "suggest": "004"
+  },
+  "YSZ": {
+   "label": "Y:ZrO₂ (YSZ, 9.5 mol%)",
+   "system": "cubic",
+   "a": 5.14,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 224,
+   "suggest": "002"
+  },
+  "CeO2": {
+   "label": "CeO₂ (ceria)",
+   "system": "cubic",
+   "a": 5.411,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 232,
+   "suggest": "002"
+  },
+  "CaF2": {
+   "label": "CaF₂ (fluorite)",
+   "system": "cubic",
+   "a": 5.463,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 152,
+   "suggest": "111"
+  },
+  "GGG": {
+   "label": "Gd₃Ga₅O₁₂ (GGG)",
+   "system": "cubic",
+   "a": 12.383,
+   "basis": "lattice",
+   "centering": "I",
+   "electrons": 1384,
+   "suggest": "004"
+  },
+  "Si": {
+   "label": "Si (silicon)",
+   "system": "cubic",
+   "a": 5.4307,
+   "basis": "lattice",
+   "centering": "diamond",
+   "electrons": 112,
+   "suggest": "004"
+  },
+  "GaAs": {
+   "label": "GaAs",
+   "system": "cubic",
+   "a": 5.6533,
+   "basis": "lattice",
+   "centering": "F",
+   "electrons": 256,
+   "suggest": "004"
+  },
+  "Al2O3": {
+   "label": "Al₂O₃ (sapphire)",
+   "system": "hexagonal",
+   "a": 4.758,
+   "c": 12.991,
+   "basis": "lattice",
+   "electrons": 150,
+   "suggest": "006"
+  },
+  "ZnO": {
+   "label": "ZnO",
+   "system": "hexagonal",
+   "a": 3.25,
+   "c": 5.207,
+   "basis": "lattice",
+   "electrons": 68,
+   "suggest": "002"
+  },
+  "GaN": {
+   "label": "GaN",
+   "system": "hexagonal",
+   "a": 3.189,
+   "c": 5.185,
+   "basis": "lattice",
+   "electrons": 124,
+   "suggest": "002"
+  },
+  "LiNbO3": {
+   "label": "LiNbO₃ (LN)",
+   "system": "hexagonal",
+   "a": 5.148,
+   "c": 13.863,
+   "basis": "lattice",
+   "electrons": 270,
+   "suggest": "006"
+  },
+  "LiTaO3": {
+   "label": "LiTaO₃ (LT)",
+   "system": "hexagonal",
+   "a": 5.154,
+   "c": 13.784,
+   "basis": "lattice",
+   "electrons": 486,
+   "suggest": "006"
+  },
+  "SiO2": {
+   "label": "SiO₂ (quartz)",
+   "system": "hexagonal",
+   "a": 4.913,
+   "c": 5.405,
+   "basis": "lattice",
+   "electrons": 90,
+   "suggest": "003"
+  },
+  "TiO2": {
+   "label": "TiO₂ (rutile)",
+   "system": "tetragonal",
+   "a": 4.594,
+   "c": 2.959,
+   "basis": "lattice",
+   "electrons": 88,
+   "suggest": "002"
+  },
+  "custom": {
+   "label": "Other — type the lattice in",
+   "system": "tetragonal",
+   "a": 3.905,
+   "c": 3.905,
+   "basis": "lattice",
+   "electrons": 100,
+   "suggest": "001"
+  }
+ },
+ "common_hkl": [
+  "001",
+  "002",
+  "003",
+  "110",
+  "111",
+  "220",
+  "222"
+ ],
+ "max_miller_index": 30
+}

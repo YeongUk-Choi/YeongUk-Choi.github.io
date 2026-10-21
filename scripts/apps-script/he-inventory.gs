@@ -20,11 +20,10 @@
  *  After editing this file you must Deploy → Manage deployments → edit → New version, or the
  *  old code keeps running.
  *
- * XRD Studio access uses separate Script Properties: XRD_CODE (shared app password),
- * XRD_APP_KEY (canonical base64 encoding of the 32-byte encryption key), and XRD_APP_VERSION
- * (the encrypted build's 64-character lowercase SHA-256 identifier). Set these in the
- * Apps Script editor, never in this file. Only a POST form with action=xrdkey and the
- * correct XRD_CODE receives the key. Keep XRD_CODE different from EDIT_CODE/PUSH_CODE.
+ * XRD Studio's shared-code check uses one separate Script Property: XRD_CODE.
+ * Set it in the Apps Script editor, never in this file; use a different code from
+ * EDIT_CODE/PUSH_CODE. A POST form with action=xrdcheck and the correct code receives
+ * only {ok:true}. The app files are public; this check controls the normal launch screen.
  */
 
 var SHEET = 'movements';
@@ -92,7 +91,8 @@ function actionSheet() {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (p.action === 'xrdkey') return json({ ok: false, error: 'Use POST for XRD access.' });
+  if (p.action === 'xrdkey') return json({ ok: false, error: 'This XRD action is no longer supported.' });
+  if (p.action === 'xrdcheck') return json({ ok: false, error: 'Use POST for XRD access.' });
   if (p.action === 'telemetry') return json(telemetryRead(p));
   return handle(p);
 }
@@ -100,48 +100,44 @@ function doGet(e) {
 /* The collector posts a JSON body rather than form fields, so a batch of backlog points is
    one request. Browser form posts from ppms.html still arrive as e.parameter. */
 function doPost(e) {
+  var p = (e && e.parameter) || {};
+  /* A cached gate may still send the retired action. Never let it count as an incorrect
+     inventory code (or collector code for JSON requests). */
+  if (p.action === 'xrdkey') return json({ ok: false, error: 'This XRD action is no longer supported.' });
   try {
     var raw = e && e.postData && e.postData.contents;
-    if (raw && raw.charAt(0) === '{') return json(handlePush(JSON.parse(raw)));
+    if (raw && raw.charAt(0) === '{') {
+      var body = JSON.parse(raw);
+      if (body.action === 'xrdkey') throw new Error('This XRD action is no longer supported.');
+      if (body.action === 'xrdcheck') throw new Error('Use a POST form for XRD access.');
+      return json(handlePush(body));
+    }
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) });
   }
-  var p = (e && e.parameter) || {};
-  if (p.action === 'xrdkey') return handleXrdKey(p);
+  if (p.action === 'xrdcheck') return handleXrdCheck(p);
   return handle(p);
 }
 
-/* ---- XRD encrypted application key ----
+/* ---- XRD shared-code check ----
    The same five-failure/ten-minute rule as inventory editing, but separate counters.
    Script Properties retain the XRD counter until expiry even if Apps Script evicts its
    cache. The script lock serializes the read/increment/write across concurrent requests. */
-function handleXrdKey(p) {
+function handleXrdCheck(p) {
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(10000);
     try {
       var props = PropertiesService.getScriptProperties();
       requireCode(p.code, 'XRD_CODE', 'xrd_', propertyCounter(props));
-      var key = props.getProperty('XRD_APP_KEY');
-      var build = props.getProperty('XRD_APP_VERSION');
-      var validKey = typeof key === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(key);
-      if (validKey) {
-        try {
-          var bytes = Utilities.base64Decode(key);
-          validKey = bytes.length === 32 && Utilities.base64Encode(bytes) === key;
-        } catch (err) { validKey = false; }
-      }
-      if (!validKey || typeof build !== 'string' || !/^[0-9a-f]{64}$/.test(build)) {
-        throw new Error('XRD app is not configured on the server.');
-      }
-      return json({ ok: true, key: key, version: 1, build: build });
+      return json({ ok: true });
     } finally { lock.releaseLock(); }
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) });
   }
 }
 
-/* CacheService-compatible interface, used only while handleXrdKey holds its lock. Each
+/* CacheService-compatible interface, used only while handleXrdCheck holds its lock. Each
    property has its own expiry, so the existing requireCode rules stay the same. */
 function propertyCounter(props) {
   return {

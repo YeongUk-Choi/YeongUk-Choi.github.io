@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta name="robots" content="noindex,nofollow">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14243d">
+  <title>XRD Studio · 박막 회절 피팅</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+  <script src="xrd_core.js" defer></script>
+  <script src="xrd_fit.js" defer></script>
+  <script src="xrd_local.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#results">결과로 건너뛰기</a>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div>
+          <div class="brand-title">XRD <strong>STUDIO</strong></div>
+          <p>Perovskite / SrTiO₃ · 대칭 θ–2θ 피팅 및 시뮬레이션</p>
+        </div>
+      </div>
+      <div class="head-actions" aria-label="파일 작업">
+        <button class="head-button primary" id="openData" type="button">측정 데이터 열기</button>
+        <button class="head-button" id="openSample" type="button">예시 다시 열기</button>
+        <button class="head-button" id="saveProject" type="button">설정 저장</button>
+        <button class="head-button" id="loadProject" type="button">설정 열기</button>
+        <a class="head-button lang-switch" id="langSwitch" href="en/">English</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="control-panel" aria-label="XRD 피팅과 시뮬레이션 설정">
+      <div class="panel-heading">
+        <div class="eyebrow">CONTROL PANEL</div>
+        <h1>XRD 패턴 피팅</h1>
+        <p>측정 범위와 변수 경계를 정한 뒤 자동 피팅을 실행하세요.</p>
+      </div>
+
+      <section class="data-card" aria-labelledby="data-title">
+        <div class="section-kicker">01 &nbsp; MEASUREMENT</div>
+        <h2 id="data-title">측정 데이터</h2>
+        <div class="file-name" id="dataName">예시 데이터를 불러오는 중…</div>
+        <div class="file-meta" id="dataMeta">2θ(°), 강도 · 2열 파일</div>
+        <p class="small-note">.dat / .csv / .txt · 원본 강도는 저장 및 내보내기에 보존됩니다.</p>
+      </section>
+
+      <form id="settingsForm" novalidate>
+        <fieldset class="setting-group">
+          <legend><span class="section-kicker">02 &nbsp; MATERIAL</span><span>시료와 반사</span></legend>
+          <div class="field-grid two">
+            <label class="field">기판
+              <select id="substrate_material" name="substrate_material"></select>
+            </label>
+            <label class="field">박막
+              <select id="film_material" name="film_material">
+                <option>SrRuO3</option><option>SrTiO3</option><option>BaTiO3</option>
+                <option>LaAlO3</option><option>LaMnO3</option><option>LaNiO3</option><option>SrVO3</option>
+              </select>
+            </label>
+          </div>
+          <p class="small-note" id="substrateNote"></p>
+          <div class="field-grid two">
+            <label class="field">반사 (hkl)
+              <input id="hkl" name="hkl" type="text" inputmode="text" autocomplete="off" spellcheck="false" value="110" required>
+              <span class="hkl-quick" id="hklQuick"></span>
+            </label>
+            <label class="field">박막 평균 격자상수 <span>a (Å)</span><input id="film_lattice_a" name="film_lattice_a" type="number" step="any" value="3.93" required></label>
+          </div>
+          <div class="field-grid two">
+            <label class="field">Thickness <span>(nm)</span><input id="film_thickness_nm" name="film_thickness_nm" type="number" step="any" min="0" value="16.67358" required><span class="thickness-conversion" id="filmThicknessQuantization">모델 반복 단위 N = 60</span></label>
+            <label class="field">박막 수직 격자 구배 Δa <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
+            <label class="field">기판 격자상수 <span>a (Å)</span><input id="substrate_lattice_a" name="substrate_lattice_a" type="number" step="any" value="3.905" required></label>
+            <label class="field" id="substrateCField" hidden>기판 c축 <span>c (Å)</span><input id="substrate_lattice_c" name="substrate_lattice_c" type="number" step="any" min="0" value="0"></label>
+            <label class="field">기판 유효 간섭 반복 수<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
+          </div>
+          <p class="small-note">Δa = 표면 a − 계면 a입니다. 모델의 반사면 법선 방향 유효 격자 간격이 선형으로 변한다고 가정하며, Thickness는 평균 a로 환산합니다.</p>
+        </fieldset>
+
+        <fieldset class="setting-group">
+          <legend><span class="section-kicker">03 &nbsp; SCAN</span><span>측정과 분해능</span></legend>
+          <label class="field">X선 파장 λ (Å)<input id="wavelength" name="wavelength" type="number" step="any" value="1.5406" required></label>
+          <div class="field-grid three">
+            <label class="field">2θ 시작 (°)<input id="xmin" name="xmin" type="number" step="any" value="28" required></label>
+            <label class="field">2θ 끝 (°)<input id="xmax" name="xmax" type="number" step="any" value="38" required></label>
+            <label class="field">간격 (°)<input id="step" name="step" type="number" step="any" value="0.01" required></label>
+          </div>
+          <div class="field-grid two">
+            <label class="field">2θ 영점 보정 (°)<input id="angle_offset_deg" name="angle_offset_deg" type="number" step="any" value="0" required></label>
+            <label class="field">기구 폭 FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
+          </div>
+          <label class="field">상대 배경<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
+        </fieldset>
+
+        <fieldset class="setting-group fitting-group">
+          <legend><span class="section-kicker">04 &nbsp; FIT</span><span>자동 피팅</span></legend>
+          <p class="fit-intro">선택한 2θ 구간에서 로그 강도와 주 피크 폭·형상을 함께 맞춥니다.</p>
+          <div class="fit-range-heading"><strong>피팅 범위 (2θ)</strong><button id="useVisibleRange" type="button">현재 그래프 범위 사용</button></div>
+          <div class="field-grid two fit-roi">
+            <label class="field">시작 (°)<input id="fit_min" type="number" step="any" value="28" inputmode="decimal"></label>
+            <label class="field">끝 (°)<input id="fit_max" type="number" step="any" value="38" inputmode="decimal"></label>
+          </div>
+          <div class="fit-variable-head"><strong>찾을 변수</strong><span>하한 · 상한</span></div>
+          <div class="fit-variable-list">
+            <div class="fit-variable" data-fit-key="film_lattice_a">
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_a" type="checkbox" checked><span>박막 평균 격자상수 a <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_a" type="number" step="any" value="3.7" aria-label="박막 격자상수 하한"><span>–</span><input id="fit_high_film_lattice_a" type="number" step="any" value="4.15" aria-label="박막 격자상수 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_lattice_gradient_a">
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span>박막 수직 격자 구배 Δa <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="-0.10" aria-label="박막 수직 격자 구배 하한"><span>–</span><input id="fit_high_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0.10" aria-label="박막 수직 격자 구배 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_planes">
+              <label class="fit-toggle"><input id="fit_enable_film_planes" type="checkbox" checked><span>Thickness <small>nm</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_planes" type="number" step="any" min="0" value="1.3" aria-label="Thickness 하한 (nm)"><span>–</span><input id="fit_high_film_planes" type="number" step="any" min="0" value="140" aria-label="Thickness 상한 (nm)"></div>
+              <div class="fit-conversion-note" id="fitThicknessBoundNote">현재 a·hkl 기준 반복 단위 N 범위로 환산됩니다.</div>
+            </div>
+            <div class="fit-variable" data-fit-key="angle_offset_deg">
+              <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ 영점 보정 <small>°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ 영점 보정 하한"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ 영점 보정 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="fwhm_deg">
+              <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>기구 Gaussian FWHM <small>°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="기구 폭 하한"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="기구 폭 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="substrate_planes">
+              <label class="fit-toggle"><input id="fit_enable_substrate_planes" type="checkbox"><span>기판 유효 간섭 반복 수 <small>정수</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_substrate_planes" type="number" step="1" min="1" max="30000" value="1000" aria-label="기판 간섭 반복 수 하한"><span>–</span><input id="fit_high_substrate_planes" type="number" step="1" min="1" max="30000" value="20000" aria-label="기판 간섭 반복 수 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="background">
+              <label class="fit-toggle"><input id="fit_enable_background" type="checkbox"><span>상대 배경</span></label>
+              <div class="fit-bounds"><input id="fit_low_background" type="number" step="any" value="0" aria-label="상대 배경 하한"><span>–</span><input id="fit_high_background" type="number" step="any" value="0.01" aria-label="상대 배경 상한"></div>
+            </div>
+          </div>
+          <p class="fit-hint">선택한 변수의 현재값이 경계 밖이면 가장 가까운 경계에서 피팅을 시작합니다. Thickness는 평균 a·hkl로 정수 반복 단위 N에 환산됩니다. Δa는 기본적으로 고정되며 피팅을 켜도 독립적으로 측정된 strain을 뜻하지 않습니다. 기판 반복 수는 최대 30,000까지 입력할 수 있지만 넓은 계산 스캔에서는 적분 한계에 닿을 수 있습니다. 기구 FWHM은 측정 피크의 전체 반치폭과 다릅니다. 반사면, 파장, 재료 배정은 사용자가 정하는 가정입니다.</p>
+          <label class="field fit-budget">탐색 예산
+            <select id="fit_evaluations"><option value="400" selected>기본 · 최대 400회 평가</option><option value="800">정밀 · 최대 800회 평가</option><option value="1200">확대 · 최대 1,200회 평가</option></select>
+          </label>
+          <button class="button fit-action" id="runFit" type="button"><span class="fit-spinner" aria-hidden="true"></span> 측정 데이터 자동 피팅</button>
+          <button class="button outline fit-cancel" id="cancelFit" type="button" hidden>피팅 중단</button>
+          <div class="fit-progress" id="fitProgress" role="status" aria-live="polite">피팅 대기 중 · 최대 400회 모델 평가</div>
+        </fieldset>
+
+        <div class="panel-actions">
+          <button class="button action" id="runSimulation" type="submit"><span class="button-icon" aria-hidden="true">↻</span> 시뮬레이션 업데이트</button>
+          <button class="button subtle" id="alignPeak" type="button">측정 주 피크를 기판으로 가정해 정렬</button>
+          <button class="button outline" id="exportCsv" type="button">곡선 CSV 내보내기 <span aria-hidden="true">↗</span></button>
+        </div>
+      </form>
+    </aside>
+
+    <section id="results" class="results" aria-labelledby="results-title">
+      <div class="results-head">
+        <div>
+          <div class="eyebrow blue">LIVE ANALYSIS</div>
+          <h2 id="results-title">회절 패턴 비교</h2>
+          <p>측정 신호와 계산 곡선을 같은 2θ 범위에서 비교합니다.</p>
+        </div>
+        <div class="scan-badge" id="scanBadge">계산 준비 중</div>
+      </div>
+
+      <div class="metrics" aria-label="주요 결과">
+        <div class="metric-card observed"><div class="metric-label">측정 주 피크 <span>표시 구간</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">최고 원본 강도 위치</div></div>
+        <div class="metric-card substrate"><div class="metric-label">기판 예상 피크</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">입력 구조에 따른 Bragg 위치</div></div>
+        <div class="metric-card film"><div class="metric-label">박막 예상 피크</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">평균 a에 따른 Bragg 위치</div></div>
+        <div class="metric-card error"><div class="metric-label">화면 로그 RMSE <span>표시 구간</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">현재 그래프 범위 기준</div></div>
+      </div>
+
+      <section class="fit-result" id="fitResult" aria-labelledby="fit-result-title" hidden>
+        <div class="fit-result-top"><div><div class="eyebrow blue">BEST FIT</div><h3 id="fit-result-title">자동 피팅 결과</h3></div><span id="fitResultRange">—</span></div>
+        <p class="fit-stale" id="fitStale" hidden>설정이 변경되었습니다. 아래 값은 이전 피팅 결과입니다. 변경한 설정으로 피팅을 다시 실행하세요.</p>
+        <div class="fit-result-grid">
+          <div><span id="fitThicknessLabel">Thickness (피팅값)</span><strong id="fitThickness">—</strong></div>
+          <div><span>박막 평균 a</span><strong id="fitLattice">—</strong></div>
+          <div><span id="fitGradientLabel">박막 수직 격자 구배 Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
+          <div><span id="fitPlanesLabel">반복 단위 N (피팅)</span><strong id="fitPlanes">—</strong></div>
+          <div><span>기구 Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>피크 반치폭 · 측정 → 계산</span><strong id="fitPeakFwhm">—</strong></div>
+          <div><span>로그 RMSE</span><strong id="fitError">—</strong></div>
+        </div>
+        <p id="fitResultDetails">—</p>
+        <p id="fitMerit" class="fit-merit" hidden></p>
+        <div class="fit-warning" id="fitWarning" hidden></div>
+        <p class="fit-result-note">Thickness는 평균 a와 선택한 hkl의 단일 박막/기판 모델값입니다. Δa는 계면→표면 유효 격자 간격의 선형 변화이며 독립적으로 측정된 strain이 아닙니다. 피크 반치폭은 박막·기판 간섭까지 포함한 측정/계산 패턴의 폭이며 기구 Gaussian FWHM과 다릅니다. 반사면·파장·재료 배정이 달라지면 결과도 달라집니다. 최적화가 전역 최적값을 보장하지 않으므로 초기값·경계·탐색 예산을 바꿔 재실행해 확인하세요.</p>
+      </section>
+
+      <section class="chart-card" aria-labelledby="chart-title">
+        <div class="chart-heading">
+          <div>
+            <h3 id="chart-title">회절 강도</h3>
+            <p>상대 강도 · 현재 표시 구간에서 각 곡선을 개별 정규화</p>
+          </div>
+          <div class="chart-controls">
+            <div class="segmented" role="group" aria-label="강도 축">
+              <button id="logScale" type="button" aria-pressed="true">로그</button>
+              <button id="linearScale" type="button" aria-pressed="false">선형</button>
+            </div>
+            <button class="reset-button" id="resetZoom" type="button">전체 범위</button>
+          </div>
+        </div>
+        <p class="curve-stale" id="curveStale" hidden>모델 입력값이 아직 적용되지 않았습니다. 현재 그래프와 잔차는 마지막 계산 곡선을 보여줍니다.</p>
+        <div class="legend" aria-label="그래프 범례">
+          <span><i class="legend-line measured"></i>측정 데이터</span>
+          <span><i class="legend-line simulated"></i>시뮬레이션</span>
+          <span><i class="legend-marker substrate"></i>기판 예상 위치</span>
+          <span><i class="legend-marker film"></i>박막 예상 위치</span>
+          <span><i class="legend-region"></i>피팅 범위</span>
+        </div>
+        <div class="plot-wrap" id="plotWrap">
+          <canvas id="chartCanvas" role="img" aria-label="측정 데이터와 시뮬레이션 강도의 2θ 그래프"></canvas>
+          <canvas id="interactionCanvas" aria-hidden="true"></canvas>
+          <div class="plot-tooltip" id="plotTooltip" hidden></div>
+        </div>
+        <div class="chart-footer"><span>드래그하여 2θ 확대 · 더블클릭 또는 전체 범위로 복원</span><span id="hoverReadout" aria-live="off">2θ 위치 위에 마우스를 올려 값을 확인하세요.</span></div>
+      </section>
+
+      <section class="residual-card" id="residualCard" aria-labelledby="residual-title" hidden>
+        <div class="residual-heading"><div><div class="eyebrow blue">FIT DIAGNOSTIC</div><h3 id="residual-title">피팅 구간 잔차</h3></div><strong id="residualOverall">—</strong></div>
+        <p class="residual-explanation">잔차 = log₁₀(계산 상대 강도) − log₁₀(측정 상대 강도). 0이 일치, +1은 계산이 10배 높음을 뜻합니다. 각 곡선은 피팅 구간 최대값으로 정규화합니다.</p>
+        <div class="residual-plot-wrap" id="residualPlotWrap"><canvas id="residualCanvas" role="img" aria-label="피팅 범위의 각도별 계산 대 측정 로그 강도 잔차"></canvas></div>
+        <div class="residual-regions" id="residualRegions" aria-label="왼쪽, 주 피크, 오른쪽 구간별 잔차"></div>
+        <p class="residual-note" id="residualNote">표시된 전체 계산 곡선을 측정 각도에 보간한 진단입니다. 피팅 최적화 점수와 값이 다를 수 있습니다.</p>
+      </section>
+
+      <div class="info-grid">
+        <section class="info-card" aria-labelledby="assumptions-title">
+          <div class="info-icon" aria-hidden="true">i</div>
+          <div><h3 id="assumptions-title">피팅 가정</h3><p>예시 파일에는 파장과 반사면 정보가 없습니다. 기본 (110), λ = 1.5406 Å와 박막 재료는 사용자가 확인할 가정입니다. 피팅은 이 배정을 자동 판정하지 않습니다.</p></div>
+        </section>
+        <section class="info-card" aria-labelledby="model-title">
+          <div class="info-icon" aria-hidden="true">∑</div>
+          <div><h3 id="model-title">모델 범위</h3><p>단일 ABO₃ 박막 + 기판의 1차원 kinematic 간섭 모델입니다. 기판은 목록에서 고르거나 격자상수를 직접 입력합니다. 반복 수와 격자상수의 경향을 살펴보는 용도이며, 동역학적 회절·Cu Kα 이중선·절대 강도 보정은 포함하지 않습니다.</p></div>
+        </section>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite">예시 데이터를 불러오는 중입니다.</div>
+    </section>
+  </main>
+
+  <input id="dataFile" type="file" accept=".dat,.csv,.txt,.xy,text/plain,text/csv" hidden>
+  <input id="projectFile" type="file" accept=".json,application/json" hidden>
+</body>
+</html>

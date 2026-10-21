@@ -19,17 +19,17 @@
     <img class="app-icon" src="assets/img/software/xrd-studio-icon.svg" alt="" width="76" height="76">
     <p class="eyebrow" data-text="eyebrow">THIN-FILM X-RAY DIFFRACTION</p>
     <h1>XRD Studio</h1>
-    <p class="description" data-text="description">Simulate and fit symmetric θ–2θ scans in your browser. Enter the access code shared with your lab, or request one from YeongUk Choi.</p>
+    <p class="description" data-text="description">Simulate and fit symmetric θ–2θ scans in your browser. Enter your shared lab code, or request one from YeongUk Choi.</p>
     <form id="unlock-form">
-      <label for="access-code" data-text="code">Access code</label>
+      <label for="access-code" data-text="code">Shared lab code</label>
       <div class="form-row">
         <input id="access-code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="gate-status">
         <button id="unlock-button" type="submit" data-text="open">Open XRD Studio</button>
       </div>
     </form>
     <p id="gate-status" class="status" role="status" aria-live="polite"></p>
-    <button id="refresh-button" type="button" data-text="refresh" hidden>Refresh page</button>
-    <a class="request" href="mailto:aowlr8945@gmail.com?subject=XRD%20Studio%20access%20request" data-text="request">Request an access code ↗</a>
+    <a class="request" href="mailto:aowlr8945@gmail.com?subject=XRD%20Studio%20lab%20code" data-text="request">Request a lab code ↗</a>
+    <p class="access-note" data-text="accessNote">The app can also be opened directly at its URL.</p>
     <noscript><p>JavaScript is required. JavaScript를 켜 주세요.</p></noscript>
   </div>
 </main>
@@ -37,7 +37,7 @@
   <div class="workspace-bar">
     <a href="software.html" data-text="back">← Software</a>
     <span>XRD Studio</span>
-    <button id="lock-button" type="button" data-text="lock">Lock this tab</button>
+    <button id="lock-button" type="button" data-text="lock">End session</button>
   </div>
   <iframe id="studio-frame" title="XRD Studio application" referrerpolicy="no-referrer"></iframe>
 </div>

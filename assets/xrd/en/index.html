@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta name="robots" content="noindex,nofollow">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14243d">
+  <title>XRD Studio · thin-film diffraction fitting</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../styles.css">
+  <script src="../xrd_core.js" defer></script>
+  <script src="../xrd_fit.js" defer></script>
+  <script src="../xrd_local.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#results">Skip to the results</a>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+        <div>
+          <div class="brand-title">XRD <strong>STUDIO</strong></div>
+          <p>Perovskite / SrTiO₃ · symmetric θ–2θ fitting and simulation</p>
+        </div>
+      </div>
+      <div class="head-actions" aria-label="File actions">
+        <button class="head-button primary" id="openData" type="button">Open measurement</button>
+        <button class="head-button" id="openSample" type="button">Reload example</button>
+        <button class="head-button" id="saveProject" type="button">Save settings</button>
+        <button class="head-button" id="loadProject" type="button">Open settings</button>
+        <a class="head-button lang-switch" id="langSwitch" href="../">한국어</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="control-panel" aria-label="XRD fitting and simulation settings">
+      <div class="panel-heading">
+        <div class="eyebrow">CONTROL PANEL</div>
+        <h1>XRD pattern fitting</h1>
+        <p>Set the fit range and the parameter bounds, then run the fit.</p>
+      </div>
+
+      <section class="data-card" aria-labelledby="data-title">
+        <div class="section-kicker">01 &nbsp; MEASUREMENT</div>
+        <h2 id="data-title">Measurement</h2>
+        <div class="file-name" id="dataName">Loading the example…</div>
+        <div class="file-meta" id="dataMeta">2θ (°), intensity · two-column file</div>
+        <p class="small-note">.dat / .csv / .txt · raw intensities are kept when you save or export.</p>
+      </section>
+
+      <form id="settingsForm" novalidate>
+        <fieldset class="setting-group">
+          <legend><span class="section-kicker">02 &nbsp; MATERIAL</span><span>Sample and reflection</span></legend>
+          <div class="field-grid two">
+            <label class="field">Substrate
+              <select id="substrate_material" name="substrate_material"></select>
+            </label>
+            <label class="field">Film
+              <select id="film_material" name="film_material">
+                <option>SrRuO3</option><option>SrTiO3</option><option>BaTiO3</option>
+                <option>LaAlO3</option><option>LaMnO3</option><option>LaNiO3</option><option>SrVO3</option>
+              </select>
+            </label>
+          </div>
+          <p class="small-note" id="substrateNote"></p>
+          <div class="field-grid two">
+            <label class="field">Reflection (hkl)
+              <input id="hkl" name="hkl" type="text" inputmode="text" autocomplete="off" spellcheck="false" value="110" required>
+              <span class="hkl-quick" id="hklQuick"></span>
+            </label>
+            <label class="field">Film mean lattice constant <span>a (Å)</span><input id="film_lattice_a" name="film_lattice_a" type="number" step="any" value="3.93" required></label>
+          </div>
+          <div class="field-grid two">
+            <label class="field">Thickness <span>(nm)</span><input id="film_thickness_nm" name="film_thickness_nm" type="number" step="any" min="0" value="16.67358" required><span class="thickness-conversion" id="filmThicknessQuantization">model repeats N = 60</span></label>
+            <label class="field">Film out-of-plane lattice gradient Δa <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
+            <label class="field">Substrate lattice constant <span>a (Å)</span><input id="substrate_lattice_a" name="substrate_lattice_a" type="number" step="any" value="3.905" required></label>
+            <label class="field" id="substrateCField" hidden>Substrate c axis <span>c (Å)</span><input id="substrate_lattice_c" name="substrate_lattice_c" type="number" step="any" min="0" value="0"></label>
+            <label class="field">Substrate coherent repeats<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
+          </div>
+          <p class="small-note">Δa = surface a − interface a. The model assumes the effective lattice spacing along the reflection normal changes linearly, and the thickness is converted using the mean a.</p>
+        </fieldset>
+
+        <fieldset class="setting-group">
+          <legend><span class="section-kicker">03 &nbsp; SCAN</span><span>Measurement and resolution</span></legend>
+          <label class="field">X-ray wavelength λ (Å)<input id="wavelength" name="wavelength" type="number" step="any" value="1.5406" required></label>
+          <div class="field-grid three">
+            <label class="field">2θ start (°)<input id="xmin" name="xmin" type="number" step="any" value="28" required></label>
+            <label class="field">2θ end (°)<input id="xmax" name="xmax" type="number" step="any" value="38" required></label>
+            <label class="field">step (°)<input id="step" name="step" type="number" step="any" value="0.01" required></label>
+          </div>
+          <div class="field-grid two">
+            <label class="field">2θ zero offset (°)<input id="angle_offset_deg" name="angle_offset_deg" type="number" step="any" value="0" required></label>
+            <label class="field">instrumental FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
+          </div>
+          <label class="field">Relative background<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
+        </fieldset>
+
+        <fieldset class="setting-group fitting-group">
+          <legend><span class="section-kicker">04 &nbsp; FIT</span><span>Automatic fitting</span></legend>
+          <p class="fit-intro">Matches the log intensity together with the width and shape of the main peak over the chosen 2θ range.</p>
+          <div class="fit-range-heading"><strong>Fit range (2θ)</strong><button id="useVisibleRange" type="button">Use the visible range</button></div>
+          <div class="field-grid two fit-roi">
+            <label class="field">start (°)<input id="fit_min" type="number" step="any" value="28" inputmode="decimal"></label>
+            <label class="field">end (°)<input id="fit_max" type="number" step="any" value="38" inputmode="decimal"></label>
+          </div>
+          <div class="fit-variable-head"><strong>Parameters to search</strong><span>lower · upper</span></div>
+          <div class="fit-variable-list">
+            <div class="fit-variable" data-fit-key="film_lattice_a">
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_a" type="checkbox" checked><span>Film mean lattice constant a <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_a" type="number" step="any" value="3.7" aria-label="film lattice constant lower bound"><span>–</span><input id="fit_high_film_lattice_a" type="number" step="any" value="4.15" aria-label="film lattice constant upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_lattice_gradient_a">
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span>Film out-of-plane lattice gradient Δa <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="-0.10" aria-label="film lattice gradient lower bound"><span>–</span><input id="fit_high_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0.10" aria-label="film lattice gradient upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_planes">
+              <label class="fit-toggle"><input id="fit_enable_film_planes" type="checkbox" checked><span>Thickness <small>nm</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_planes" type="number" step="any" min="0" value="1.3" aria-label="thickness lower bound (nm)"><span>–</span><input id="fit_high_film_planes" type="number" step="any" min="0" value="140" aria-label="thickness upper bound (nm)"></div>
+              <div class="fit-conversion-note" id="fitThicknessBoundNote">Converted to a repeat-count range using the current a and hkl.</div>
+            </div>
+            <div class="fit-variable" data-fit-key="angle_offset_deg">
+              <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ zero offset <small>°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ zero offset lower bound"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ zero offset upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="fwhm_deg">
+              <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>Instrumental Gaussian FWHM <small>°</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="instrumental width lower bound"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="instrumental width upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="substrate_planes">
+              <label class="fit-toggle"><input id="fit_enable_substrate_planes" type="checkbox"><span>Substrate coherent repeats <small>whole number</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_substrate_planes" type="number" step="1" min="1" max="30000" value="1000" aria-label="substrate coherent repeats lower bound"><span>–</span><input id="fit_high_substrate_planes" type="number" step="1" min="1" max="30000" value="20000" aria-label="substrate coherent repeats upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="background">
+              <label class="fit-toggle"><input id="fit_enable_background" type="checkbox"><span>Relative background</span></label>
+              <div class="fit-bounds"><input id="fit_low_background" type="number" step="any" value="0" aria-label="relative background lower bound"><span>–</span><input id="fit_high_background" type="number" step="any" value="0.01" aria-label="relative background upper bound"></div>
+            </div>
+          </div>
+          <p class="fit-hint">If a selected parameter starts outside its bounds, the fit begins at the nearest bound. Thickness is converted to an integer repeat count N using the mean a and the hkl. Δa is fixed by default, and fitting it does not make it an independently measured strain. The substrate repeat count accepts up to 30,000, but a wide calculation scan can reach the integration limit. The instrumental FWHM is not the full width of the measured peak. The reflection, the wavelength and the material are assumptions you are making.</p>
+          <label class="field fit-budget">Search budget
+            <select id="fit_evaluations"><option value="400" selected>standard · up to 400 evaluations</option><option value="800">fine · up to 800 evaluations</option><option value="1200">extended · up to 1,200 evaluations</option></select>
+          </label>
+          <button class="button fit-action" id="runFit" type="button"><span class="fit-spinner" aria-hidden="true"></span> Fit the measurement</button>
+          <button class="button outline fit-cancel" id="cancelFit" type="button" hidden>Stop fitting</button>
+          <div class="fit-progress" id="fitProgress" role="status" aria-live="polite">Waiting to fit · up to 400 model evaluations</div>
+        </fieldset>
+
+        <div class="panel-actions">
+          <button class="button action" id="runSimulation" type="submit"><span class="button-icon" aria-hidden="true">↻</span> Update simulation</button>
+          <button class="button subtle" id="alignPeak" type="button">Align, assuming the main peak is the substrate</button>
+          <button class="button outline" id="exportCsv" type="button">Export curves as CSV <span aria-hidden="true">↗</span></button>
+        </div>
+      </form>
+    </aside>
+
+    <section id="results" class="results" aria-labelledby="results-title">
+      <div class="results-head">
+        <div>
+          <div class="eyebrow blue">LIVE ANALYSIS</div>
+          <h2 id="results-title">Measured and calculated patterns</h2>
+          <p>The measured signal and the calculated curve over the same 2θ range.</p>
+        </div>
+        <div class="scan-badge" id="scanBadge">preparing the calculation</div>
+      </div>
+
+      <div class="metrics" aria-label="Key results">
+        <div class="metric-card observed"><div class="metric-label">Measured main peak <span>visible range</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">position of the highest raw intensity</div></div>
+        <div class="metric-card substrate"><div class="metric-label">Expected substrate peak</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">Bragg position from the structure you entered</div></div>
+        <div class="metric-card film"><div class="metric-label">Expected film peak</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">Bragg position from the mean a</div></div>
+        <div class="metric-card error"><div class="metric-label">Displayed log RMSE <span>visible range</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">over the current chart range</div></div>
+      </div>
+
+      <section class="fit-result" id="fitResult" aria-labelledby="fit-result-title" hidden>
+        <div class="fit-result-top"><div><div class="eyebrow blue">BEST FIT</div><h3 id="fit-result-title">Fit result</h3></div><span id="fitResultRange">—</span></div>
+        <p class="fit-stale" id="fitStale" hidden>The settings have changed. The values below are from the previous fit — run the fit again with the new settings.</p>
+        <div class="fit-result-grid">
+          <div><span id="fitThicknessLabel">Thickness (fitted)</span><strong id="fitThickness">—</strong></div>
+          <div><span>Film mean a</span><strong id="fitLattice">—</strong></div>
+          <div><span id="fitGradientLabel">Film out-of-plane lattice gradient Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
+          <div><span id="fitPlanesLabel">Repeats N (fitted)</span><strong id="fitPlanes">—</strong></div>
+          <div><span>Instrumental Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>Peak FWHM · measured → calculated</span><strong id="fitPeakFwhm">—</strong></div>
+          <div><span>log RMSE</span><strong id="fitError">—</strong></div>
+        </div>
+        <p id="fitResultDetails">—</p>
+        <p id="fitMerit" class="fit-merit" hidden></p>
+        <div class="fit-warning" id="fitWarning" hidden></div>
+        <p class="fit-result-note">Thickness is a single film-on-substrate model value from the mean a and the chosen hkl. Δa is the linear change in effective lattice spacing from interface to surface, not an independently measured strain. The peak FWHM is the width of the measured and calculated patterns, film and substrate interference included, and is not the instrumental Gaussian FWHM. Different reflection, wavelength or material assignments give different results. The optimisation does not guarantee a global optimum, so change the starting values, the bounds or the search budget and run it again to check.</p>
+      </section>
+
+      <section class="chart-card" aria-labelledby="chart-title">
+        <div class="chart-heading">
+          <div>
+            <h3 id="chart-title">Diffracted intensity</h3>
+            <p>Relative intensity · each curve normalised within the visible range</p>
+          </div>
+          <div class="chart-controls">
+            <div class="segmented" role="group" aria-label="Intensity axis">
+              <button id="logScale" type="button" aria-pressed="true">log</button>
+              <button id="linearScale" type="button" aria-pressed="false">linear</button>
+            </div>
+            <button class="reset-button" id="resetZoom" type="button">Full range</button>
+          </div>
+        </div>
+        <p class="curve-stale" id="curveStale" hidden>The model inputs have not been applied yet. The chart and the residuals show the last calculated curve.</p>
+        <div class="legend" aria-label="Chart legend">
+          <span><i class="legend-line measured"></i>Measurement</span>
+          <span><i class="legend-line simulated"></i>Simulation</span>
+          <span><i class="legend-marker substrate"></i>Expected substrate position</span>
+          <span><i class="legend-marker film"></i>Expected film position</span>
+          <span><i class="legend-region"></i>Fit range</span>
+        </div>
+        <div class="plot-wrap" id="plotWrap">
+          <canvas id="chartCanvas" role="img" aria-label="2θ chart of the measured and simulated intensities"></canvas>
+          <canvas id="interactionCanvas" aria-hidden="true"></canvas>
+          <div class="plot-tooltip" id="plotTooltip" hidden></div>
+        </div>
+        <div class="chart-footer"><span>Drag to zoom in 2θ · double-click or Full range to reset</span><span id="hoverReadout" aria-live="off">Hover over a 2θ position to read the values.</span></div>
+      </section>
+
+      <section class="residual-card" id="residualCard" aria-labelledby="residual-title" hidden>
+        <div class="residual-heading"><div><div class="eyebrow blue">FIT DIAGNOSTIC</div><h3 id="residual-title">Residuals over the fit range</h3></div><strong id="residualOverall">—</strong></div>
+        <p class="residual-explanation">Residual = log₁₀(calculated relative intensity) − log₁₀(measured relative intensity). Zero is agreement; +1 means the calculation is ten times higher. Each curve is normalised to its maximum within the fit range.</p>
+        <div class="residual-plot-wrap" id="residualPlotWrap"><canvas id="residualCanvas" role="img" aria-label="Calculated minus measured log intensity against angle over the fit range"></canvas></div>
+        <div class="residual-regions" id="residualRegions" aria-label="Residuals for the left, main-peak and right regions"></div>
+        <p class="residual-note" id="residualNote">A diagnostic from the whole displayed calculated curve interpolated onto the measured angles. These numbers can differ from the optimisation score.</p>
+      </section>
+
+      <div class="info-grid">
+        <section class="info-card" aria-labelledby="assumptions-title">
+          <div class="info-icon" aria-hidden="true">i</div>
+          <div><h3 id="assumptions-title">Fitting assumptions</h3><p>The example file carries no wavelength or reflection information. The default (110), λ = 1.5406 Å and the film material are assumptions for you to confirm. The fit does not decide them for you.</p></div>
+        </section>
+        <section class="info-card" aria-labelledby="model-title">
+          <div class="info-icon" aria-hidden="true">∑</div>
+          <div><h3 id="model-title">Model scope</h3><p>A one-dimensional kinematic interference model of a single ABO₃ film on a substrate. Pick the substrate from the list or type its lattice constant in. It is for following trends in repeat counts and lattice constants; dynamical diffraction, the Cu Kα doublet and absolute intensity scaling are not included.</p></div>
+        </section>
+      </div>
+      <div class="status" id="status" role="status" aria-live="polite">Loading the example data.</div>
+    </section>
+  </main>
+
+  <input id="dataFile" type="file" accept=".dat,.csv,.txt,.xy,text/plain,text/csv" hidden>
+  <input id="projectFile" type="file" accept=".json,application/json" hidden>
+</body>
+</html>

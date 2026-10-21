@@ -1,6 +1,5 @@
-// Enable only after deploying the updated Apps Script and encrypted app package.
-// The existing PPMS endpoint is reused. Never put XRD_CODE or XRD_APP_KEY here.
-// 켜는 순서: ① Apps Script에 XRD_CODE·XRD_APP_KEY·XRD_APP_VERSION 설정 → ② 새 버전 배포
-// → ③ 그 키로 암호화한 assets/dl/xrd-app.enc + manifest 푸시 → ④ 여기를 true 로.
-// 순서를 건너뛰면 Software 카드의 실행 버튼만 떠 있고 문은 안 열립니다.
+// The existing PPMS endpoint checks the shared lab code. Do not put XRD_CODE here.
+// 켜는 순서: ① Apps Script에 XRD_CODE 설정 → ② xrdcheck 지원 버전 배포
+// → ③ 평문 앱 assets/xrd/ 배포 → ④ 여기를 true 로.
+// 이 값은 Software 진입 버튼과 코드 화면의 스위치입니다. 앱 주소로 직접 접속할 수 있습니다.
 window.XRD_GATE = {enabled: false};

@@ -1,4 +1,4 @@
-/* Local Apps Script contract tests. All codes and keys below are synthetic fixtures.
+/* Local Apps Script contract tests. All codes below are synthetic fixtures.
    Run: node --test scripts/apps-script/test_xrd_auth.cjs */
 'use strict';
 
@@ -9,8 +9,6 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, 'he-inventory.gs'), 'utf8');
-const KEY = Buffer.alloc(32, 7).toString('base64');
-const BUILD = 'a'.repeat(64);
 
 function fixture(overrides = {}) {
   let now = 1700000000000;
@@ -20,7 +18,7 @@ function fixture(overrides = {}) {
   let releases = 0;
   const reads = [];
   const props = new Map(Object.entries({ EDIT_CODE: 'test-edit-code', PUSH_CODE: 'test-push-code',
-    XRD_CODE: 'test-xrd-code', XRD_APP_KEY: KEY, XRD_APP_VERSION: BUILD, ...overrides }));
+    XRD_CODE: 'test-xrd-code', ...overrides }));
   const cache = new Map();
   const properties = {
     getProperty(name) { reads.push(name); return props.get(name) ?? null; },
@@ -59,10 +57,6 @@ function fixture(overrides = {}) {
         held = false; releases++;
       }
     }) },
-    Utilities: {
-      base64Decode: value => Array.from(Buffer.from(value, 'base64')),
-      base64Encode: bytes => Buffer.from(bytes).toString('base64')
-    },
     ContentService: {
       MimeType: { JSON: 'application/json' },
       createTextOutput: content => ({ content,
@@ -73,10 +67,10 @@ function fixture(overrides = {}) {
   return {
     context, props, cache, reads,
     post(code = 'test-xrd-code', extra = {}) {
-      return JSON.parse(context.doPost({ parameter: { action: 'xrdkey', code }, ...extra }).content);
+      return JSON.parse(context.doPost({ parameter: { action: 'xrdcheck', code }, ...extra }).content);
     },
     get(code = 'test-xrd-code') {
-      return JSON.parse(context.doGet({ parameter: { action: 'xrdkey', code } }).content);
+      return JSON.parse(context.doGet({ parameter: { action: 'xrdcheck', code } }).content);
     },
     advance(ms) { now += ms; },
     failLock(message) { lockError = message; },
@@ -88,17 +82,19 @@ function assertDenied(reply) {
   assert.equal(reply.ok, false);
   assert.equal(typeof reply.error, 'string');
   assert.deepEqual(Object.keys(reply).sort(), ['error', 'ok']);
-  assert.ok(!JSON.stringify(reply).includes(KEY));
-  assert.ok(!JSON.stringify(reply).includes(BUILD));
+  for (const code of ['test-xrd-code', 'test-edit-code', 'test-push-code']) {
+    assert.ok(!JSON.stringify(reply).includes(code));
+  }
 }
 
-test('correct POST form returns only key, protocol version and build', () => {
+test('correct POST form returns exactly ok:true with no secrets or additional properties', () => {
   const f = fixture();
-  assert.deepEqual(f.post(), { ok: true, key: KEY, version: 1, build: BUILD });
+  assert.deepEqual(f.post(), { ok: true });
+  assert.deepEqual(f.reads, ['xrd_lockout', 'XRD_CODE']);
   f.assertUnlocked();
 });
 
-test('GET cannot disclose a key, even with a correct password; it does not alter counters', () => {
+test('GET rejects the check even with a correct password and does not alter counters', () => {
   const f = fixture();
   assertDenied(f.get());
   assert.match(f.get().error, /Use POST/);
@@ -107,20 +103,34 @@ test('GET cannot disclose a key, even with a correct password; it does not alter
   f.assertUnlocked();
 });
 
-test('JSON action=xrdkey cannot reach the POST form key route', () => {
+test('JSON action=xrdcheck rejects without counting a wrong collector or inventory code', () => {
   const f = fixture();
   assertDenied(f.post('test-xrd-code', { postData: {
-    contents: JSON.stringify({ action: 'xrdkey', code: 'test-xrd-code' })
+    contents: JSON.stringify({ action: 'xrdcheck', code: 'test-xrd-code' })
   } }));
-  assert.equal(f.reads.includes('XRD_APP_KEY'), false);
+  assert.deepEqual(f.reads, []);
+  assert.equal(f.cache.size, 0);
+  assert.equal(f.props.has('xrd_fails'), false);
   f.assertUnlocked();
 });
 
-test('wrong and missing passwords reveal neither key nor build and do not read either property', () => {
+test('legacy collector POST ping still uses PUSH_CODE and returns its normal response', () => {
+  const f = fixture();
+  const reply = JSON.parse(f.context.doPost({ postData: {
+    contents: JSON.stringify({ action: 'ping', key: 'test-push-code' })
+  } }).content);
+  assert.equal(reply.ok, true);
+  assert.equal(reply.stored, 0);
+  assert.equal(typeof reply.server_ts, 'string');
+  assert.deepEqual(f.reads, ['PUSH_CODE']);
+  assert.equal(f.props.has('xrd_fails'), false);
+  f.assertUnlocked();
+});
+
+test('wrong and missing passwords reveal no secrets and use only the XRD counter', () => {
   const f = fixture();
   for (const code of ['wrong', '', null]) assertDenied(f.post(code));
-  assert.equal(f.reads.includes('XRD_APP_KEY'), false);
-  assert.equal(f.reads.includes('XRD_APP_VERSION'), false);
+  assert.ok(f.reads.every(name => ['XRD_CODE', 'xrd_fails', 'xrd_lockout'].includes(name)));
   assert.equal(JSON.parse(f.props.get('xrd_fails')).value, '3');
   assert.equal(f.cache.size, 0);
   f.assertUnlocked();
@@ -171,11 +181,14 @@ test('failure streak expires after ten quiet minutes and each failure renews tha
   f.assertUnlocked();
 });
 
-test('editing and XRD passwords cannot be interchanged', () => {
+test('editing, collector and XRD passwords cannot be interchanged', () => {
   const f = fixture();
   assertDenied(f.post('test-edit-code'));
+  assertDenied(f.post('test-push-code'));
   assert.throws(() => f.context.requireCode('test-xrd-code'), /Wrong code/);
+  assert.throws(() => f.context.requirePushCode('test-xrd-code'), /Wrong push code/);
   assert.doesNotThrow(() => f.context.requireCode('test-edit-code'));
+  assert.doesNotThrow(() => f.context.requirePushCode('test-push-code'));
   assert.equal(f.post().ok, true);
   f.assertUnlocked();
 });
@@ -215,39 +228,40 @@ test('legacy EDIT_CODE success/reset/expiry semantics stay unchanged', () => {
   f.assertUnlocked();
 });
 
-test('absent XRD_CODE fails closed without touching key/version', () => {
+test('absent XRD_CODE fails closed', () => {
   const f = fixture({ XRD_CODE: '' });
   assertDenied(f.post());
-  assert.equal(f.reads.includes('XRD_APP_KEY'), false);
-  assert.equal(f.reads.includes('XRD_APP_VERSION'), false);
+  assert.deepEqual(f.reads, ['xrd_lockout', 'XRD_CODE']);
   f.assertUnlocked();
 });
 
-test('malformed or missing key configuration fails closed after password validation', () => {
-  const invalidKeys = [null, '', ' ', KEY + '\n', KEY.slice(0, -1),
-    Buffer.alloc(31).toString('base64'), Buffer.alloc(33).toString('base64'),
-    KEY.slice(0, -2) + 'd=', '-'.repeat(43) + '='];
-  for (const key of invalidKeys) {
-    const f = fixture({ XRD_APP_KEY: key });
-    assertDenied(f.post('wrong'));
-    assert.equal(f.reads.includes('XRD_APP_KEY'), false);
-    const reply = f.post();
-    assertDenied(reply);
-    assert.equal(reply.error, 'XRD app is not configured on the server.');
-    f.assertUnlocked();
+test('retired xrdkey action cannot affect inventory, collector or XRD counters via GET or POST', () => {
+  const f = fixture();
+  const propertiesBefore = [...f.props];
+  for (let i = 0; i < 6; i++) {
+    for (const code of ['wrong', 'test-xrd-code', 'test-edit-code']) {
+      const event = { parameter: { action: 'xrdkey', code } };
+      assertDenied(JSON.parse(f.context.doGet(event).content));
+      assertDenied(JSON.parse(f.context.doPost(event).content));
+    }
   }
+  assert.deepEqual(f.reads, []);
+  assert.deepEqual([...f.props], propertiesBefore);
+  assert.equal(f.cache.size, 0);
+  f.assertUnlocked();
 });
 
-test('malformed or missing build configuration fails closed after password validation', () => {
-  for (const build of [null, '', 'a'.repeat(63), 'a'.repeat(65), 'A'.repeat(64), 'g'.repeat(64), BUILD + '\n']) {
-    const f = fixture({ XRD_APP_VERSION: build });
-    assertDenied(f.post('wrong'));
-    assert.equal(f.reads.includes('XRD_APP_VERSION'), false);
-    const reply = f.post();
-    assertDenied(reply);
-    assert.equal(reply.error, 'XRD app is not configured on the server.');
-    f.assertUnlocked();
+test('retired xrdkey JSON requests reject without any credential checks or counter changes', () => {
+  const f = fixture();
+  for (let i = 0; i < 6; i++) {
+    assertDenied(f.post('test-xrd-code', { postData: {
+      contents: JSON.stringify({ action: 'xrdkey', code: 'test-xrd-code', key: 'test-push-code' })
+    } }));
   }
+  assert.deepEqual(f.reads, []);
+  assert.equal(f.cache.size, 0);
+  assert.equal(f.props.has('xrd_fails'), false);
+  f.assertUnlocked();
 });
 
 test('bad durable counter data fails closed and releases the script lock', () => {
@@ -255,12 +269,12 @@ test('bad durable counter data fails closed and releases the script lock', () =>
     const f = fixture();
     f.props.set('xrd_lockout', counter);
     assertDenied(f.post());
-    assert.equal(f.reads.includes('XRD_APP_KEY'), false);
+    assert.deepEqual(f.reads, ['xrd_lockout']);
     f.assertUnlocked();
   }
 });
 
-test('failure to acquire lock returns no key and never releases an unheld lock', () => {
+test('failure to acquire lock rejects and never releases an unheld lock', () => {
   const f = fixture();
   f.failLock('Timed out waiting for access.');
   assertDenied(f.post());

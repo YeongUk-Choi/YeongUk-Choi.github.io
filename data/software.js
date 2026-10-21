@@ -46,9 +46,9 @@ window.SITE.software = {
         "Fits lattice constant, thickness, zero offset, instrumental width, substrate coherence and background within bounds you set",
         "Per-region residuals, so a good overall score cannot hide a wrong tail",
         "Tells you when a result needs review \u2014 a parameter on its bound, a large residual, a thickness that is a conversion rather than a fit",
-        "Runs entirely in your browser after unlocking; measurement files and fitting stay on your device"
+        "Runs entirely in your browser; measurement files and fitting stay on your device"
       ],
-      needs: "A current browser and an access code \u00b7 Korean and English interface",
+      needs: "A current browser and the shared lab code \u00b7 Korean and English interface",
       caveat: "One-dimensional kinematic diffraction only \u2014 no dynamical diffraction, tilt, 3D strain, roughness, " +
               "absorption or K\u03b1 doublet. Five substrates are calculated with the full ABO\u2083 structure factor; " +
               "the rest put the peak and the fringe spacing in the right place but approximate the substrate peak height. " +
