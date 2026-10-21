@@ -452,8 +452,13 @@ const XRDCore = (() => {
     const substratePeriod = projectedRepeat(subA, hkl, subC, subSystem);
     const sigma = params.fwhm_deg / (2 * Math.sqrt(2 * Math.log(2)));
     const halo = params.resolution_halo_fraction > 0 && params.resolution_halo_width > 1;
-    let halfWidth = 4.5 * sigma;
+    // Replace the historical 4.5-sigma cutoff with 10-sigma convergence,
+    // including f=0: weak wings can be sensitive to a strong peak's tails.
+    let halfWidth = 10.0 * sigma;
     if (halo) halfWidth *= params.resolution_halo_width;
+    if (params.lp_mode.endsWith("_footprint") && x[0] - params.angle_offset_deg - halfWidth <= 0) {
+      throw new Error("Footprint broadening reaches zero incidence; reduce FWHM or halo width, or disable the footprint approximation");
+    }
     const endAngle = Math.min(180 - 1e-9 + params.angle_offset_deg, x[x.length - 1] + halfWidth);
     const maxQ = (4 * Math.PI * Math.sin((((endAngle - params.angle_offset_deg) * 0.5) * Math.PI) / 180))
                  / params.wavelength;
@@ -494,8 +499,8 @@ const XRDCore = (() => {
       const samples = new Float64Array(steps + 1);
       // Guard the expanded convolution before computing costly film domains.
       // An upper bound avoids a second traversal of every angle's grid window.
-      if (halo && x.length * Math.min(steps + 1, Math.floor(2 * halfWidth / step) + 2) > 100000000) {
-        throw new Error("Resolution halo convolution is too large; reduce halo width, FWHM, coherence repeats, or scan points");
+      if (x.length * Math.min(steps + 1, Math.floor(2 * halfWidth / step) + 2) > 100000000) {
+        throw new Error("Resolution convolution is too large; reduce halo width, FWHM, coherence repeats, or scan points");
       }
       for (let i = 0; i <= steps; i++) {
         grid[i] = start + i * step;

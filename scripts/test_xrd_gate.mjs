@@ -433,6 +433,73 @@ try {
     }
     record(`${language}: refinement and halo controls have translated labels, neutral defaults and opt-in advanced taper`, labels);
 
+    const convolutionErrors = [
+      "Resolution convolution is too large; reduce halo width, FWHM, coherence repeats, or scan points",
+      "Resolution halo convolution is too large; reduce halo width, FWHM, coherence repeats, or scan points",
+    ];
+    const localizedErrors = await evaluate(app(`(() => {
+      const explain=f.contentWindow.eval("explainModelError");
+      return ${JSON.stringify(convolutionErrors)}.map(message=>explain(new Error(message)));
+    })()`));
+    localizedErrors.forEach((message, index) => {
+      assert.notEqual(message, convolutionErrors[index], "Convolution budget errors must reach the UI explanation");
+      assert.match(message, language === "ko" ? /줄이세요/ : /reduce/i);
+      if (language === "en") assert(!/[가-힣]/.test(message));
+      else assert(/[가-힣]/.test(message));
+    });
+    record(`${language}: generic and legacy resolution convolution limits show translated recovery guidance`);
+
+    // A broad footprint kernel must not sample the 1/sin(theta) singularity
+    // through a clamp and then display a spurious low-angle peak.
+    const previousCurve = await evaluate(app(`f.contentWindow.eval("state.simulation.intensities")`));
+    await evaluate(app(`(() => {
+      const core=f.contentWindow.eval("XRDCore");
+      f.contentWindow.eval("applyConfig")({parameters:{...core.DEFAULTS,hkl:"002",wavelength:1.11197,
+        film_lattice_a:3.93,film_planes:12,substrate_planes:350,fwhm_deg:1,
+        resolution_halo_fraction:0.005,resolution_halo_width:20,
+        lp_mode:"synchrotron_horizontal_footprint"},scan:{xmin:28,xmax:38,step:0.01}});
+      return true;
+    })()`));
+    await appClick("runSimulation");
+    await waitFor(app(`!d.getElementById("runSimulation").disabled &&
+      d.getElementById("status").classList.contains("error")`), `${language} zero-incidence footprint rejection`);
+    const footprintMessage = await evaluate(app(`d.getElementById("status").textContent`));
+    assert.match(footprintMessage, /2θ=0°/);
+    assert.match(footprintMessage, language === "ko" ? /조사 길이.*끄세요/ : /turn off the footprint correction/i);
+    if (language === "en") assert(!/[가-힣]/.test(footprintMessage));
+    assert.deepEqual(await evaluate(app(`f.contentWindow.eval("state.simulation.intensities")`)), previousCurve,
+      "Rejected zero-incidence calculation must not replace the displayed curve");
+    record(`${language}: broad footprint reaching zero incidence is rejected with translated guidance and preserves the previous curve`);
+
+    // The 4.5σ -> 10σ correction changes the calculated curve even at f=0.
+    // A legacy fit score must not be restored beside that corrected curve.
+    assert.equal(typeof baseline.model_revision, "string");
+    assert(baseline.model_revision.length > 0, "Saved projects must identify the numerical model revision");
+    assert(baseline.fit_result, "Revision regression needs a saved fit result");
+    for (const revision of [null, "historical-gaussian-4.5sigma"]) {
+      const oldResult = structuredClone(baseline);
+      if (revision === null) delete oldResult.model_revision;
+      else oldResult.model_revision = revision;
+      const name = `refinement-${language}-${revision === null ? "unversioned" : "outdated"}-fit`;
+      await loadProjectFixture(oldResult, name);
+      assert.equal(await evaluate(app(`d.getElementById("fitResult").hidden`)), true,
+        "A saved fit from a different or unknown model must require refitting");
+      const message = await evaluate(app(`d.getElementById("fitProgress").textContent`));
+      assert.match(message, language === "ko" ? /피팅/ : /refit|fit again/i);
+      if (language === "en") assert(!/[가-힣]/.test(message));
+      const migrated = await saveCurrentProject(`${name}-resaved`);
+      assert.deepEqual(migrated.parameters, baseline.parameters, "Legacy model parameters must remain usable");
+      assert.deepEqual(migrated.measurement, baseline.measurement, "Legacy measured data must remain usable");
+      assert.equal(migrated.model_revision, baseline.model_revision);
+      assert.equal(migrated.fit_result, undefined, "Outdated fit metrics must not be resaved as current");
+    }
+    await loadProjectFixture(baseline, `refinement-${language}-current-model-fit`);
+    assert.equal(await evaluate(app(`d.getElementById("fitResult").hidden`)), false,
+      "Matching model revision must restore saved fit metrics");
+    assert.equal(await evaluate(app(`d.getElementById("fitError").textContent`)),
+      `${baseline.fit_result.initial_log_rmse === null ? "—" : baseline.fit_result.initial_log_rmse.toFixed(3)} → ${baseline.fit_result.best_log_rmse.toFixed(3)}`);
+    record(`${language}: legacy or outdated model fits require refitting while matching revisions restore scores and all projects retain data`);
+
     const chosen = {film_interface_width: 2.25, film_thickness_sigma: 1.5, background_slope: -0.04,
       resolution_halo_fraction:0.0075, resolution_halo_width:4.5};
     await evaluate(app(`(() => {

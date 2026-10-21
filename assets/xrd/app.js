@@ -1,6 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+// Saved fit scores are only valid for the numerical model that produced them.
+const modelRevision = "gaussian-10sigma-v1";
 const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3"]);
 /* Any hkl may be typed: "110", "1 1 0", "(1,1,0)", or "0 0 6" for a hexagonal
    substrate. Four-index hexagonal input (hkil) drops the redundant third index. */
@@ -154,8 +156,11 @@ function explainModelError(error) {
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
     return "선택한 조건에서 계산 적분 격자가 120,000단계 한계를 넘었습니다. 2θ 계산 스캔 범위, 기판 유효 간섭 반복 수 또는 넓은 분해능 성분 폭 배수 m을 줄이세요. 피팅 범위를 좁힐 때는 계산 스캔 범위도 함께 조정하세요.";
   }
-  if (/Resolution halo convolution is too large/i.test(message)) {
-    return "넓은 분해능 성분의 합성곱 계산량이 한계를 넘었습니다. 폭 배수 m, FWHM, 유효 간섭 반복 수 또는 계산 지점 수를 줄이세요.";
+  if (/Resolution (?:halo )?convolution is too large/i.test(message)) {
+    return "분해능 합성곱 계산량이 한계를 넘었습니다. FWHM, 유효 간섭 반복 수, 계산 지점 수 또는 넓은 성분의 폭 배수 m을 줄이세요.";
+  }
+  if (/Footprint broadening reaches zero incidence/i.test(message)) {
+    return "분해능 적분 범위가 2θ=0°에 닿아 조사 길이 근사를 사용할 수 없습니다. FWHM이나 폭 배수 m을 줄이거나 조사 길이 보정을 끄세요.";
   }
   if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
     return "두께 분포·테이퍼 계산량이 한계를 넘었습니다. 계산 스캔 범위를 좁히거나 두께 분포, 격자 구배 또는 유효 간섭 반복 수를 줄이세요.";
@@ -1353,7 +1358,7 @@ async function ensureCurrentSimulation() {
 async function saveProject() {
   try {
     if (!await ensureCurrentSimulation()) return;
-    const project = {format:"xrd-studio-project-v1",parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
+    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
     project.fit_settings = captureFitSettings();
     if (state.fitResult && !state.fitResult.stale) project.fit_result = state.fitResult;
@@ -1375,7 +1380,10 @@ async function loadProject(file) {
     else {state.measurement = null; $("dataName").textContent = "측정 데이터 없음"; $("dataMeta").textContent = "2θ(°), 강도 · 2열 파일";}
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
-      if (measurement && project.fit_result) {
+      if (measurement && project.fit_result && project.model_revision !== modelRevision) {
+        setFitProgress("저장된 피팅의 계산 기준이 현재와 다릅니다. 다시 피팅하세요.");
+      }
+      if (measurement && project.fit_result && project.model_revision === modelRevision) {
         try {
           const saved = project.fit_result;
           const result = validateFitResponse(saved, config.scan);

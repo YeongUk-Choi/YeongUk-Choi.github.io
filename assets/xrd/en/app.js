@@ -1,6 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+// Saved fit scores are only valid for the numerical model that produced them.
+const modelRevision = "gaussian-10sigma-v1";
 const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3"]);
 /* Any hkl may be typed: "110", "1 1 0", "(1,1,0)", or "0 0 6" for a hexagonal
    substrate. Four-index hexagonal input (hkil) drops the redundant third index. */
@@ -154,8 +156,11 @@ function explainModelError(error) {
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
     return "The integration grid exceeds 120,000 steps under these conditions. Reduce the 2θ calculation scan, substrate coherent repeats, or broad resolution component width multiplier m. Narrowing the fit range also requires adjusting the calculation scan.";
   }
-  if (/Resolution halo convolution is too large/i.test(message)) {
-    return "The broad resolution component exceeds the convolution work limit. Reduce width multiplier m, FWHM, coherent repeat counts, or calculation points.";
+  if (/Resolution (?:halo )?convolution is too large/i.test(message)) {
+    return "The resolution convolution exceeds the work limit. Reduce FWHM, coherence repeats, scan points, or the wider component's width multiplier m.";
+  }
+  if (/Footprint broadening reaches zero incidence/i.test(message)) {
+    return "The resolution window reaches 2θ=0°, where the footprint approximation cannot be used. Reduce FWHM or the width multiplier m, or turn off the footprint correction.";
   }
   if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
     return "The thickness-domain/taper calculation exceeds the work limit. Narrow the calculation scan or reduce thickness spread, lattice gradient, or coherent repeat counts.";
@@ -1353,7 +1358,7 @@ async function ensureCurrentSimulation() {
 async function saveProject() {
   try {
     if (!await ensureCurrentSimulation()) return;
-    const project = {format:"xrd-studio-project-v1",parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "no measurement"};
+    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "no measurement"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
     project.fit_settings = captureFitSettings();
     if (state.fitResult && !state.fitResult.stale) project.fit_result = state.fitResult;
@@ -1375,7 +1380,10 @@ async function loadProject(file) {
     else {state.measurement = null; $("dataName").textContent = "no measurement"; $("dataMeta").textContent = "2θ (°), intensity · two-column file";}
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
-      if (measurement && project.fit_result) {
+      if (measurement && project.fit_result && project.model_revision !== modelRevision) {
+        setFitProgress("The saved fit used a different calculation. Run the fit again.");
+      }
+      if (measurement && project.fit_result && project.model_revision === modelRevision) {
         try {
           const saved = project.fit_result;
           const result = validateFitResponse(saved, config.scan);
