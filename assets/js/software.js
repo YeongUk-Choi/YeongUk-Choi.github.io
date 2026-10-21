@@ -7,9 +7,14 @@
   const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const KIND = { desktop: "runs on your PC", script: "command line", web: "runs in the browser" };
 
+  /* A card only offers to launch something once that door is actually open:
+     data/xrd.js carries the switch, and until it is on the icon and the button
+     are plain, not links to a gate that cannot let anyone in. */
+  const launchable = (it) => Boolean(it.launch) && Boolean((window.XRD_GATE || {}).enabled);
+
   function card(it) {
     const prep = it.status === "preparing";
-    const links = (it.links || []).map(l =>
+    const links = ((it.links || []).filter((l) => !l.page || launchable(it))).map(l =>
       `<a class="btn small${l.primary ? " primary" : ""}" href="${esc(l.href)}"${/^https?:/.test(l.href) ? ' target="_blank" rel="noopener"' : l.page ? "" : " download"}>${esc(l.label)}</a>`).join("");
     const meta = [it.version && `v${esc(it.version)}`, it.date && esc(it.date), it.license ? esc(it.license) : "ask before reuse"]
       .filter(Boolean).join(" \u00b7 ");
@@ -18,7 +23,7 @@
     /* With a screen to show, the name belongs over it like an app tile; the right-hand
        column then opens straight into what the thing does. */
     const head = `<div class="sw-head">
-        ${it.icon ? (it.launch ? `<a href="${esc(it.launch)}" aria-label="Open ${esc(it.name)}"><img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54"></a>` : `<img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54">`) : ""}
+        ${it.icon ? (launchable(it) ? `<a href="${esc(it.launch)}" aria-label="Open ${esc(it.name)}"><img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54"></a>` : `<img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54">`) : ""}
         <div class="sw-idname">
           <span class="sw-name">${esc(it.name)}</span>
           ${it.sub ? `<span class="sw-sub">${esc(it.sub)}</span>`
