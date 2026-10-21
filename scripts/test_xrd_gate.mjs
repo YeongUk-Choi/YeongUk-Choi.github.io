@@ -5,11 +5,12 @@
 // Usage: node scripts/test_xrd_gate.mjs --xrd-root ../xrd-studio-gpt [--chrome PATH]
 import assert from "node:assert/strict";
 import {spawn, execFileSync} from "node:child_process";
-import {createHash, randomBytes} from "node:crypto";
+import {createHash} from "node:crypto";
 import {createServer} from "node:http";
 import {mkdtemp, readFile, writeFile, rm, mkdir} from "node:fs/promises";
 import path from "node:path";
-import {fileURLToPath, pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
+import {createContext, runInContext} from "node:vm";
 
 const siteRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const options = process.argv.slice(2);
@@ -30,7 +31,7 @@ const evidence = path.resolve(option("--output", path.join(temp, "evidence")));
 await mkdir(evidence, {recursive: true});
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const storageName = "xrd-studio-session-key";
+const storageName = "xrd-studio-open";
 const tests = [], errors = [], network = [], blocked = [], responses = [];
 const record = (name, detail) => { tests.push({name, detail}); console.log(`PASS ${name}`); };
 let chrome, socket, server, cdp, evaluate, screenshot;
@@ -75,24 +76,64 @@ async function connect(url) {
 
 try {
   execFileSync("python3", [path.join(xrdRoot, "scripts/build_web.py"), "--output", path.join(temp, "plain")]);
-  const {encryptFiles} = await import(pathToFileURL(path.join(xrdRoot, "scripts/encrypt_web.mjs")));
   const filenames = ["index.html", "en/index.html", "app.js", "en/app.js", "styles.css",
     "xrd_core.js", "xrd_fit.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
   const files = Object.fromEntries(await Promise.all(filenames.map(async (name) =>
     [name, await readFile(path.join(temp, "plain", name), "utf8")])));
-  const key = randomBytes(32);
-  const envelope = await encryptFiles(files, key);
-  assert.equal(envelope.version, 1);
-  assert.match(envelope.build, /^[a-f0-9]{64}$/, "Encrypted package needs its content build hash");
-  const goodBody = JSON.stringify(envelope);
-  const goodManifest = {version: 1, build: envelope.build, bundle: "xrd-app.enc", sha256: hash(goodBody)};
+  for (const filename of filenames) {
+    assert.equal(await readFile(path.join(siteRoot, "assets/xrd", filename), "utf8"), files[filename],
+      `Published static asset differs from current build: ${filename}`);
+  }
+  record("All twelve shipped static app files match a fresh source build");
   const wrongCode = "intentionally-wrong-test-code";
-  const correctCode = `test-only-${randomBytes(12).toString("hex")}`;
-  const fixture = {enabled: true, body: goodBody, manifest: goodManifest, authBuild: envelope.build};
-  let authCalls = 0, wrongResponses = 0;
+  const correctCode = "local-fixture-code-1234";
+  const fixture = {enabled: true};
+  let authCalls = 0;
+  const clock = {now: Date.now()};
+  class FixtureDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [clock.now])); }
+    static now() { return clock.now; }
+  }
+  const properties = new Map([["XRD_CODE", correctCode], ["EDIT_CODE", "fixture-inventory-code"], ["PUSH_CODE", "fixture-push-code"]]);
+  const propertyService = {
+    getProperty: (name) => properties.get(name) ?? null,
+    setProperty: (name, value) => properties.set(name, String(value)),
+    deleteProperty: (name) => properties.delete(name),
+  };
+  const cache = new Map();
+  const cacheService = {
+    get(name) {
+      const entry = cache.get(name);
+      if (!entry || entry.expires <= clock.now) { cache.delete(name); return null; }
+      return entry.value;
+    },
+    put: (name, value, seconds) => cache.set(name, {value: String(value), expires: clock.now + seconds * 1000}),
+    remove: (name) => cache.delete(name),
+  };
+  let held = false;
+  const lock = {
+    waitLock() { assert.equal(held, false, "Script lock acquired twice"); held = true; },
+    releaseLock() { assert.equal(held, true, "Unheld script lock released"); held = false; },
+  };
+  const appsScriptSource = await readFile(path.join(siteRoot, "scripts/apps-script/he-inventory.gs"), "utf8");
+  const backend = createContext({
+    Date: FixtureDate,
+    PropertiesService: {getScriptProperties: () => propertyService},
+    CacheService: {getScriptCache: () => cacheService},
+    LockService: {getScriptLock: () => lock},
+    ContentService: {MimeType: {JSON: "application/json"}, createTextOutput: (value) => ({
+      text: String(value), setMimeType() { return this; },
+    })},
+  });
+  runInContext(appsScriptSource, backend, {filename: "he-inventory.gs"});
   const assets = new Map([
     ["/xrd-studio.html", "text/html"], ["/assets/js/xrd-gate.js", "text/javascript"],
     ["/assets/css/xrd-gate.css", "text/css"], ["/assets/img/software/xrd-studio-icon.svg", "image/svg+xml"],
+    ["/software.html", "text/html"], ["/assets/js/software.js", "text/javascript"],
+    ["/assets/js/site.js", "text/javascript"], ["/assets/css/site.css", "text/css"],
+    ["/data/profile.js", "text/javascript"], ["/data/software.js", "text/javascript"],
+    ["/assets/img/software/xrd-studio.jpg", "image/jpeg"], ["/assets/img/software/rietveld-auto.jpg", "image/jpeg"],
+    ["/assets/img/software/rietveld-auto-icon.svg", "image/svg+xml"], ["/assets/img/qr-site.svg", "image/svg+xml"],
   ]);
   let origin;
   server = createServer(async (request, response) => {
@@ -111,22 +152,22 @@ try {
         let body = "";
         for await (const chunk of request) { body += chunk; assert(body.length < 4096); }
         const params = new URLSearchParams(body);
-        assert.equal(params.get("action"), "xrdkey");
-        const ok = params.get("code") === correctCode;
-        const value = ok ? {ok: true, key: key.toString("base64"), version: 1, build: fixture.authBuild}
-          : {ok: false, error: "Wrong code."};
-        if (!ok) {
-          wrongResponses++;
-          assert(!("key" in value));
-          assert(!JSON.stringify(value).includes("XRDCore"));
-        }
-        responses.push({route, ok, properties: Object.keys(value)});
+        assert.equal(params.get("action"), "xrdcheck");
+        const result = backend.doPost({parameter: Object.fromEntries(params),
+          postData: {contents: body, type: "application/x-www-form-urlencoded"}});
+        const value = JSON.parse(result.text);
+        assert.equal(held, false, "Authentication must release its script lock");
+        assert.deepEqual(Object.keys(value).sort(), value.ok ? ["ok"] : ["error", "ok"]);
+        responses.push({route, ok: value.ok, properties: Object.keys(value), error: value.error});
         response.setHeader("Content-Type", "application/json");
         response.end(JSON.stringify(value));
-      } else if (route === "/assets/dl/xrd-app.manifest.json") {
-        response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(fixture.manifest));
-      } else if (route === "/assets/dl/xrd-app.enc") {
-        response.setHeader("Content-Type", "application/json"); response.end(fixture.body);
+      } else if (route.startsWith("/assets/xrd/")) {
+        let name = route.slice("/assets/xrd/".length);
+        if (!name || name.endsWith("/")) name += "index.html";
+        assert(filenames.includes(name), `Unexpected app file ${name}`);
+        const mime = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+          ".json": "application/json", ".svg": "image/svg+xml"}[path.extname(name)] || "text/plain";
+        response.setHeader("Content-Type", mime); response.end(files[name]);
       } else if (assets.has(route)) {
         response.setHeader("Content-Type", assets.get(route)); response.end(await readFile(path.join(siteRoot, route)));
       } else if (route === "/favicon.ico") {
@@ -179,8 +220,11 @@ try {
   await cdp.send("Page.setLifecycleEventsEnabled", {enabled: true});
   await cdp.send("Fetch.enable", {patterns: [{urlPattern: "*", requestStage: "Request"}]});
   await cdp.send("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false});
+  const downloads = path.join(evidence, "downloads");
+  await mkdir(downloads);
+  await cdp.send("Browser.setDownloadBehavior", {behavior: "allow", downloadPath: downloads});
   evaluate = async (expression) => {
-    const value = await cdp.send("Runtime.evaluate", {expression, returnByValue: true, awaitPromise: true});
+    const value = await cdp.send("Runtime.evaluate", {expression, returnByValue: true, awaitPromise: true, userGesture: true});
     if (value.exceptionDetails) throw new Error(value.exceptionDetails.exception?.description || value.exceptionDetails.text);
     return value.result.value;
   };
@@ -198,12 +242,16 @@ try {
     const {data} = await cdp.send("Page.captureScreenshot", {format: "png", captureBeyondViewport: false});
     await writeFile(path.join(evidence, `${name}.png`), Buffer.from(data, "base64"));
   };
-  const page = async (language = "en") => {
-    const {loaderId} = await cdp.send("Page.navigate", {url: `${origin}/xrd-studio.html?lang=${language}`});
+  const navigate = async (route) => {
+    const {loaderId} = await cdp.send("Page.navigate", {url: `${origin}${route}`});
     const deadline = Date.now() + 15000;
     while (!loaded.has(loaderId) && Date.now() < deadline) await delay(50);
     assert(loaded.has(loaderId), "New page did not finish loading");
-    await waitFor(`document.readyState === "complete" && !!document.getElementById("unlock-form")`, "gate page load");
+    await waitFor(`document.readyState === "complete"`, "page load");
+  };
+  const page = async (language = "en") => {
+    await navigate(`/xrd-studio.html?lang=${language}`);
+    await waitFor(`!!document.getElementById("unlock-form")`, "gate page load");
   };
   const reload = async () => {
     const previous = loadCount;
@@ -220,7 +268,7 @@ try {
   const app = (expression) => `(() => {const f=document.getElementById("studio-frame");
     const d=f?.contentDocument; if (!d) return null; return (${expression});})()`;
   const appReady = () => waitFor(app(`d.getElementById("dataName")?.textContent === "sample_data.dat" &&
-    /1,001/.test(d.getElementById("dataMeta")?.textContent) && !d.getElementById("runSimulation")?.disabled`), "decrypted app sample and simulation");
+    /1,001/.test(d.getElementById("dataMeta")?.textContent) && !d.getElementById("runSimulation")?.disabled`), "app sample and simulation");
   const appClick = (id) => evaluate(app(`d.getElementById(${JSON.stringify(id)}).click()`));
   const sessionPresent = async () => Boolean(await evaluate(`sessionStorage.getItem(${JSON.stringify(storageName)})`));
   const assertLocked = async () => {
@@ -228,32 +276,49 @@ try {
     assert.equal(await evaluate(app(`Boolean(d.getElementById("settingsForm"))`)), false);
     assert.equal(await sessionPresent(), false);
   };
-  const assertSecretStorage = async () => {
+  const assertSessionStorage = async () => {
     const data = await evaluate(`({session:Object.entries(sessionStorage),local:Object.entries(localStorage),code:document.getElementById("access-code").value})`);
-    assert.equal(data.session.length, 1, "Only the app session should be stored");
-    assert.equal(data.session[0][0], storageName);
-    assert(data.session[0][1].includes(key.toString("base64")), "Session should retain the app key");
+    assert.deepEqual(data.session, [[storageName, "1"]], "Only a nonsecret open marker should be stored");
     assert.equal(data.local.length, 0, "Persistent localStorage must stay empty");
     assert.equal(data.code, "", "Password input should be cleared");
-    assert(!data.session[0][1].includes(correctCode), "Password must not be retained");
   };
 
   fixture.enabled = false;
+  await navigate("/software.html");
+  await waitFor(`document.querySelectorAll(".sw-card").length === 2`, "software cards");
+  assert.equal(await evaluate(`document.querySelectorAll('a[href="xrd-studio.html"]').length`), 0);
+  assert.equal(await evaluate(`!!document.querySelector('img[src="assets/img/software/xrd-studio-icon.svg"]').closest("a")`), false);
+  record("Disabled configuration hides Software icon launch and page launch button");
   await page("en");
   await evaluate(`document.getElementById("unlock-form").dispatchEvent(new Event("submit", {bubbles:true,cancelable:true}))`);
   await delay(150);
   assert.equal(authCalls, 0); await assertLocked();
   record("Disabled configuration does not call authentication");
   fixture.enabled = true;
+  await navigate("/software.html");
+  await waitFor(`document.querySelectorAll('a[href="xrd-studio.html"]').length === 2`, "enabled Software launch links");
+  assert.equal(await evaluate(`!!document.querySelector('img[src="assets/img/software/xrd-studio-icon.svg"]').closest("a")`), true);
+  record("Enabled configuration exposes both Software launch links");
   await page("en");
   assert.equal(await evaluate("document.documentElement.lang"), "en");
   const beforeWrong = network.length;
   await submit(wrongCode);
-  assert.equal(wrongResponses, 1); await assertLocked();
-  assert(!network.slice(beforeWrong).some(({url}) => /xrd-app\.(?:enc|manifest)/.test(url)), "Wrong code must not load app package");
+  assert.equal(responses.at(-1).ok, false); await assertLocked();
+  assert(!network.slice(beforeWrong).some(({url}) => url.startsWith(`${origin}/assets/xrd/`)), "Wrong code must not load app");
   assert.match(await evaluate(`document.getElementById("gate-status").textContent`), /wrong|incorrect|invalid/i);
   await screenshot("wrong-code-en");
-  record("Wrong password returns no key or code and opens no iframe", {responseProperties: responses.at(-1).properties});
+  record("Wrong password receives only an error and opens no app iframe", {responseProperties: responses.at(-1).properties});
+  for (let attempt = 1; attempt < 5; attempt++) await submit(wrongCode);
+  await submit(correctCode); await assertLocked();
+  assert.match(responses.at(-1).error, /too many|lock/i);
+  assert.match(await evaluate(`document.getElementById("gate-status").textContent`), /10/);
+  backend.requireCode("fixture-inventory-code");
+  backend.requirePushCode("fixture-push-code");
+  clock.now += 10 * 60 * 1000 - 1;
+  await submit(correctCode); await assertLocked();
+  assert.match(responses.at(-1).error, /too many|lock/i);
+  clock.now += 1;
+  record("Actual Apps Script: five failures block correct code for ten minutes; inventory and push codes remain usable");
 
   await evaluate(`document.getElementById("gate-language").click()`);
   await waitFor(`document.documentElement.lang === "ko"`, "Korean gate language");
@@ -264,9 +329,11 @@ try {
   await screenshot("gate-ko-mobile");
   await cdp.send("Emulation.setDeviceMetricsOverride", {width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false});
   record("Gate switches between English and Korean");
-  await submit(correctCode); await appReady(); await assertSecretStorage();
+  await submit(correctCode); await appReady(); await assertSessionStorage();
   assert.equal(await evaluate(app("d.documentElement.lang")), "ko");
-  record("Correct password decrypts Korean app with 1,001 sample points; sessionStorage only");
+  assert.equal(await evaluate(`new URL(document.getElementById("studio-frame").src).pathname`), "/assets/xrd/");
+  assert.equal(await evaluate(`document.getElementById("studio-frame").hasAttribute("srcdoc")`), false);
+  record("After ten-minute expiry, correct code opens Korean app with 1,001 points and stores only a nonsecret session marker");
 
   async function fitFlow(language) {
     const before = await evaluate(app(`["film_lattice_a","film_thickness_nm","angle_offset_deg"].map(id=>d.getElementById(id).value)`));
@@ -287,10 +354,36 @@ try {
     record(`${language}: progress, cancel without parameter changes, complete 400 evaluation refit`, {progress, details});
   }
   await fitFlow("ko");
+  async function downloadText(name) {
+    const target = path.join(downloads, name);
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      try { return {target, text: await readFile(target, "utf8")}; } catch { await delay(100); }
+    }
+    throw new Error(`Download did not finish: ${name}`);
+  }
+  await appClick("exportCsv");
+  const csv = await downloadText("xrd_simulation.csv");
+  assert.equal(csv.text.trim().split(/\r?\n/).length, 1002);
+  assert.match(csv.text, /two_theta_deg,simulation_relative,measurement_raw,measurement_relative/);
+  await appClick("saveProject");
+  const project = await downloadText("xrd_studio_project.json");
+  const saved = JSON.parse(project.text);
+  assert.equal(saved.format, "xrd-studio-project-v1");
+  assert.equal(saved.measurement.two_theta_deg.length, 1001);
+  assert.equal(saved.fit_result.evaluations, 400);
+  await evaluate(app(`(() => { const input=d.getElementById("film_lattice_a"); input.value="4.05";
+    input.dispatchEvent(new Event("change",{bubbles:true})); return true; })()`));
+  const fileInput = await cdp.send("Runtime.evaluate", {expression:
+    `document.getElementById("studio-frame").contentDocument.getElementById("projectFile")`});
+  await cdp.send("DOM.setFileInputFiles", {objectId: fileInput.result.objectId, files: [project.target]});
+  await waitFor(app(`Number(d.getElementById("film_lattice_a").value) === ${saved.parameters.film_lattice_a} &&
+    !d.getElementById("fitResult").hidden && /복원/.test(d.getElementById("fitProgress").textContent)`), "saved settings and fit restore");
+  record("CSV download contains 1,001 curve rows; settings download and file input restore parameters, sample, and fit result");
   const beforeReload = authCalls;
   await reload(); await appReady();
   assert.equal(authCalls, beforeReload, "Reload must restore using tab session, without a password request");
-  await assertSecretStorage();
+  await assertSessionStorage();
   record("Reload restores app from tab session without another authentication request");
 
   await appClick("runFit");
@@ -298,8 +391,8 @@ try {
   await evaluate(`document.getElementById("lock-button").click()`);
   await waitFor(`document.getElementById("workspace").hidden`, "lock operation");
   await delay(100); await assertLocked();
-  assert.equal(await evaluate(`document.getElementById("studio-frame").getAttribute("srcdoc") || ""`), "");
-  record("Lock during active fit removes session and destroys application iframe document");
+  assert.equal(await evaluate(`document.getElementById("studio-frame").hasAttribute("srcdoc")`), false);
+  record("Close during active fit removes session and unloads the application iframe");
   await reload();
   await waitFor(`document.readyState === "complete" && !!document.getElementById("unlock-form")`, "locked reload");
   await assertLocked(); assert.equal(authCalls, beforeReload);
@@ -307,47 +400,53 @@ try {
 
   await page("en"); await submit(correctCode); await appReady();
   assert.equal(await evaluate(app("d.documentElement.lang")), "en");
+  assert.equal(await evaluate(`new URL(document.getElementById("studio-frame").src).pathname`), "/assets/xrd/en/");
   await fitFlow("en");
-
-  async function refreshFailure(name, language, change) {
-    await evaluate(`document.getElementById("lock-button").click()`); await assertLocked();
-    fixture.body = goodBody; fixture.manifest = goodManifest; fixture.authBuild = envelope.build;
-    await page(language); await submit(correctCode); await appReady();
-    change();
-    const calls = authCalls;
-    await reload();
-    await waitFor(`document.readyState === "complete" && !sessionStorage.getItem(${JSON.stringify(storageName)}) &&
-      !!document.getElementById("gate-status")?.textContent`, name);
-    await assertLocked(); assert.equal(authCalls, calls);
-    const message = await evaluate(`document.getElementById("gate-status").textContent`);
-    assert.match(message, language === "ko" ? /새로고침/ : /refresh|reload/i);
-    await screenshot(name);
-    record(`${name}: localized refresh guidance and session cleared`, {message});
+  await assertSessionStorage();
+  const beforeSwitch = authCalls;
+  await appClick("langSwitch");
+  await waitFor(`${app(`d.documentElement.lang === "ko"`)} && document.documentElement.lang === "ko" &&
+    new URL(location.href).searchParams.get("lang") === "ko"`, "inner Korean switch syncs parent");
+  await appReady();
+  await appClick("langSwitch");
+  await waitFor(`${app(`d.documentElement.lang === "en"`)} && document.documentElement.lang === "en" &&
+    new URL(location.href).searchParams.get("lang") === "en"`, "inner English switch syncs parent");
+  await appReady();
+  await reload(); await appReady();
+  assert.equal(await evaluate(app("d.documentElement.lang")), "en");
+  assert.equal(await evaluate(`new URL(location.href).searchParams.get("lang")`), "en");
+  assert.equal(authCalls, beforeSwitch);
+  record("Inner language switches update parent language/query; reload retains English without another code check");
+  await evaluate(`document.getElementById("studio-frame").src="/software.html"`);
+  await waitFor(`document.getElementById("workspace").hidden &&
+    /could not be loaded/.test(document.getElementById("gate-status").textContent)`, "later iframe load failure shows app error");
+  await waitFor(app(`!d.getElementById("settingsForm")`), "failed iframe unload");
+  await assertLocked();
+  assert.equal(await evaluate(`document.getElementById("studio-frame").src`), "about:blank");
+  await screenshot("later-app-load-error-en");
+  record("Later iframe navigation without settingsForm returns to gate with app error, clears marker, and unloads iframe");
+  const beforeDirect = authCalls;
+  for (const [route, language] of [["/assets/xrd/", "ko"], ["/assets/xrd/en/", "en"]]) {
+    await navigate(route);
+    await waitFor(`document.getElementById("dataName")?.textContent === "sample_data.dat" &&
+      /1,001/.test(document.getElementById("dataMeta")?.textContent) && !document.getElementById("runSimulation")?.disabled`, "direct app load");
+    assert.equal(await evaluate("document.documentElement.lang"), language);
+    assert.match(await evaluate(`document.querySelector('meta[name="robots"]')?.content || ""`), /noindex/);
+    assert.equal(await sessionPresent(), false);
   }
-  await refreshFailure("stale-build-ko", "ko", () => {
-    fixture.manifest = {...goodManifest, build: "a".repeat(64)};
-    fixture.authBuild = fixture.manifest.build;
-  });
-  await refreshFailure("damaged-cipher-en", "en", () => {
-    const damaged = Buffer.from(envelope.ciphertext, "base64"); damaged[0] ^= 1;
-    fixture.body = JSON.stringify({...envelope, ciphertext: damaged.toString("base64")});
-    fixture.manifest = {...goodManifest, sha256: hash(fixture.body)};
-  });
-  await refreshFailure("hash-mismatch-ko", "ko", () => {
-    fixture.body = `${goodBody}\n`;
-  });
-
+  assert.equal(authCalls, beforeDirect);
+  record("Both direct static app addresses intentionally work without authentication and include noindex");
   assert.equal(await evaluate("localStorage.length"), 0);
-  const plaintextRequests = network.filter(({url}) => /^https?:/.test(url) &&
-    /\/(?:xrd_(?:core|fit|local|worker)\.js|xrd_data\.json|sample_data\.dat|(?:en\/)?app\.js)(?:[?#]|$)/.test(new URL(url).pathname));
-  assert.deepEqual(plaintextRequests, []);
+  assert(!network.some(({url}) => /xrd-app\.(?:enc|manifest)|xrdkey/.test(url)), "Retired encrypted-app paths must not be requested");
+  assert(network.some(({url}) => url === `${origin}/assets/xrd/xrd_worker.js`), "Fitting must load the static worker");
   assert.deepEqual(blocked, [], "App must not try to contact external services");
   assert.deepEqual(errors, [], "No JavaScript errors or missing assets");
-  record("No plaintext application asset fetch, persistent secret storage, external request, console error, or 404", {requests: network.length});
+  record("Static worker runs; no persistent password, retired encrypted-app request, external request, console error, or 404", {requests: network.length});
   await writeFile(path.join(evidence, "report.json"), JSON.stringify({passed: true, tests,
     source: {siteHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: siteRoot, encoding: "utf8"}).trim(),
       gateSha256: hash(await readFile(path.join(siteRoot, "assets/js/xrd-gate.js"))),
-      xrdHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: xrdRoot, encoding: "utf8"}).trim(), bundleBuild: envelope.build},
+      backendSha256: hash(appsScriptSource), appSha256: hash(JSON.stringify(files)),
+      xrdHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: xrdRoot, encoding: "utf8"}).trim()},
     network, responses, errors, blocked}, null, 2));
   console.log(`Evidence: ${evidence}`);
 } catch (error) {

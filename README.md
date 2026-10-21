@@ -35,78 +35,57 @@ Live at https://yeonguk-choi.github.io (GitHub repo `YeongUk-Choi/YeongUk-Choi.g
 
 Google Scholar blocks automated access and has no API, so it is only the profile link. The DOI list in `scripts/fetch_publications.py` is the source of truth (11 peer-reviewed papers, verified 2026-09-22). Add a paper with `python3 scripts/fetch_publications.py --add <DOI>`. Figures: only CC BY articles are shown with a figure by default; closed-access papers show abstract + DOI until an author-owned image is supplied.
 
-## XRD Studio browser access
+## XRD Studio shared lab code
 
-`xrd-studio.html` is the Korean/English access page (`?lang=ko` or `?lang=en`). The XRD icon
-and Open in browser link on Software lead there. `data/xrd.js` deliberately ships with
-`enabled: false` until the server and encrypted app are deployed. Disabled mode sends no
-password request: the old Apps Script would mistake an unknown action for inventory editing.
+`xrd-studio.html` asks for the shared lab code in Korean or English (`?lang=ko` or
+`?lang=en`). Apps Script checks `XRD_CODE` and answers `{ok:true}` on success. The page then
+loads the ordinary static app at `assets/xrd/` or `assets/xrd/en/` in an iframe.
 
-### First deployment (owner sets secrets in Apps Script)
+**Anyone who knows the app URL can open it directly without entering the code.** The code
+is not stored in public JavaScript, but the app files are public. `noindex, nofollow` asks
+search engines not to list the pages; it does not prevent direct access.
 
-1. Review and copy `scripts/apps-script/he-inventory.gs` into the existing inventory Apps
-   Script project. Keep the existing spreadsheet, `EDIT_CODE`, and `PUSH_CODE` properties.
-2. In **Project Settings → Script properties**, add `XRD_CODE`, a new shared access password
-   different from the inventory and collector codes. Add `XRD_APP_KEY`, the canonical padded
-   base64 encoding of 32 random bytes. Never put either value in this repo, a command argument,
-   a chat, or a screenshot. The key is distinct from the password; do not derive it from a
-   short password. The owner can generate it on macOS with `openssl rand -base64 32 | pbcopy`,
-   paste it into the property, then clear the clipboard after the private build step.
-3. In the private `xrd-studio` checkout, run `python3 scripts/build_web.py`. Supply the same
-   key to the packaging environment without echoing it. For the owner's zsh terminal:
+### Deploy
 
-   ```zsh
-   read -rs 'XRD_APP_KEY?Paste encryption key (hidden): '
-   export XRD_APP_KEY
-   node scripts/encrypt_web.mjs --output build/encrypted/xrd-app.enc
-   unset XRD_APP_KEY
+1. In the existing inventory Apps Script project's **Project Settings → Script properties**,
+   set **`XRD_CODE`** to the shared lab code. Keep it distinct from `EDIT_CODE` and `PUSH_CODE`.
+   This is the only new property required. Do not put the code in the site's files.
+2. Copy `scripts/apps-script/he-inventory.gs` into that project and deploy a **new version**
+   of the existing web app. Keep its current spreadsheet, execution/access settings, and
+   `/exec` URL in `data/ppms.js`. The endpoint now accepts a form POST with `action=xrdcheck`.
+3. Build the app from the `xrd-studio` checkout into this site's `assets/xrd/` directory:
+
+   ```sh
+   python3 scripts/build_web.py --output ../uk-card-site/assets/xrd
    ```
 
-4. Add `XRD_APP_VERSION` in Apps Script, copying the public `build` value from
-   `build/encrypted/xrd-app.manifest.json`. Copy only the two encrypted output files to this
-   site's `assets/dl/`. Do not copy the plaintext build folder, sources, ZIPs, keys, or maps.
-5. **Deploy → Manage deployments → Edit → New version → Deploy** the existing web app.
-   Preserve its existing execute-as-owner and public-access settings and `/exec` URL in
-   `data/ppms.js`. Scripts saved in the editor do not automatically update that deployment.
-6. Verify the new server is deployed before changing `data/xrd.js` to `enabled: true`.
-   A GET to `/exec?action=xrdkey` must return `Use POST for XRD access.` and no key; use no
-   password in the URL. Deploy the gate, encrypted package, manifest, and activation setting
-   together after review. Test a correct password on the live HTTPS site and perform a fit.
-7. In browser Network tools, verify one wrong password produces only a denial JSON, no key
-   and no decrypted application. Do not deliberately exhaust the production lockout. Use
-   the local test harness for five-failure tests. Confirm inventory and telemetry still work.
+   Adjust the sibling checkout path if using worktrees. Commit all twelve generated files
+   together with the website change. Future app updates use this same build command.
+4. After the updated Apps Script and app files are deployed, set `data/xrd.js` to
+   `enabled: true`. This single switch controls the Software icon link, Open in browser
+   button, and code form. Disabled mode makes no code-check request. The direct app URL
+   remains usable regardless of this switch.
+5. On the live HTTPS site, check a correct code, an incorrect code, and a complete fit.
+   Confirm the existing inventory and telemetry still work. Five-failure tests use the
+   local harness so they do not interrupt lab users.
 
-The API uses a form POST and follows the Apps Script Content Service redirect. The gate uses
-`credentials: omit` and does not place the password in a URL. Live Google redirect/CORS behavior
-must be checked after the owner deploys; the automated tests run against a local service.
-See [Google's Content Service guide](https://developers.google.com/apps-script/guides/content)
-and [Script properties guide](https://developers.google.com/apps-script/guides/properties).
+Live Google redirect/CORS behavior still needs the final check after Apps Script deployment.
+The local browser test executes the actual Apps Script handlers using mocked Google services;
+it never contacts the production endpoint. GET `?action=xrdcheck` returns a POST-only message
+without checking a code. The retired prototype endpoint rejects requests without touching
+inventory or collector counters.
 
-### Sessions, updates, and access limits
+### Sessions and code attempts
 
-Only the authenticated key and build ID are saved in `sessionStorage`; the password is
-cleared immediately, and no secrets go into `localStorage`. **Lock this tab** removes the
-saved key, discards the app frame and fitting workers, and revokes its worker URL. Reloading
-an unlocked tab restores the app, not unsaved measurement state. Save a session before
-reloading, changing language, or locking. Browser session restoration may preserve a page
-session; use Lock this tab on shared machines. See [MDN sessionStorage](https://developer.mozilla.org/en-US/docs/Web/API/Window/sessionStorage).
+The page remembers only `xrd-studio-open = "1"` in `sessionStorage`. It clears the input after
+submission and never stores the lab code. Reloading this tab opens a fresh app session without
+another code check. **End session** removes the flag and unloads the app and fitting worker.
+Save settings before reloading, switching language, or ending the session to keep your work.
+A remembered tab is not rechecked when the shared code changes.
 
-Five wrong XRD passwords lock new XRD access for everyone for ten minutes. The counter is
-separate from inventory and collector counters, persists in Script Properties, and is updated
-under a script lock. It is a shared limit, not a per-person account system.
-
-Each rebuild requires replacing both encrypted files and setting `XRD_APP_VERSION` to the
-new manifest build. A mixed deployment, damaged ciphertext, wrong key, or stale tab fails
-closed with a localized refresh message. Deploying during a brief maintenance window avoids
-users encountering the intermediate mismatch. Keep `enabled: false` during rollback or setup.
-
-This gate protects initial access to the encrypted bundle. An authorized visitor receives
-the key and decrypted program and can save or share them. Changing only `XRD_CODE` stops
-future password logins but does not revoke keys already issued or copies already saved.
-To stop an old key unlocking future releases, generate a new `XRD_APP_KEY`, rebuild the bundle,
-and update both files plus `XRD_APP_VERSION`. Existing plaintext copies cannot be recalled.
-The deployment builder necessarily receives the key temporarily; Script Properties is the
-server-side store, not a claim that the key never reaches a legitimate browser or deployer.
+Five incorrect codes pause code checks for everyone for ten minutes, including correct-code
+attempts during that interval. The durable XRD counter is separate from inventory and collector
+counters. This pause does not affect direct app URLs or tabs that already remember acceptance.
 
 ### Local verification
 
@@ -115,6 +94,6 @@ node --test scripts/apps-script/test_xrd_auth.cjs
 node scripts/test_xrd_gate.mjs --xrd-root ../xrd-studio-gpt
 ```
 
-The browser test uses its own local server, temporary random key, and Chrome profile. It must
-never call the production Apps Script. `--chrome PATH` selects a different Chrome binary.
-Source numerical parity tests belong to the `xrd-studio` checkout.
+The browser test uses its own local server and Chrome profile. `--chrome PATH` selects another
+Chrome binary. Numerical parity tests belong to the `xrd-studio` checkout. To update the shipped
+app, edit that source and rebuild; do not edit generated `assets/xrd/` files by hand.

@@ -7,7 +7,6 @@ button, input { font: inherit; }
 .gate-nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: min(11vh, 90px); }
 .back { display: inline-block; text-decoration: none; font-size: 14px; }
 #gate-language { padding: 8px 12px; color: #dbe4ef; background: #26384f; font-size: 13px; }
-#refresh-button { margin: 0 12px 16px 0; padding: 8px 12px; font-size: 13px; }
 .gate-card { max-width: 580px; padding: clamp(28px, 5vw, 48px); border: 1px solid #ffffff22; border-radius: 24px; background: #ffffff0c; box-shadow: 0 26px 80px #0005; }
 .app-icon { display: block; border-radius: 18px; }
 .eyebrow { margin: 24px 0 6px; color: #a7bad4; font-size: 11px; font-weight: 750; letter-spacing: .18em; }
@@ -21,6 +20,7 @@ button { padding: 13px 18px; color: #09131f; background: #c8d9ff; border: 0; bor
 button:disabled { opacity: .55; cursor: wait; }
 .status { min-height: 24px; margin: 13px 0 20px; color: #ffbb9f; font-size: 13px; }
 .request { font-size: 13px; text-decoration: none; }
+.access-note { margin: 20px 0 0; color: #a7bad4; font-size: 12px; line-height: 1.6; }
 .workspace { height: 100vh; }
 .workspace-bar { height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; background: #0b1421; font-size: 13px; }
 .workspace-bar a { text-decoration: none; }
