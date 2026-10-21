@@ -28,13 +28,16 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background"];
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background", "background_slope"];
+const optionalModelNumbers = new Set(["film_lattice_gradient_a", "substrate_lattice_c", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background"];
+const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
 const fitBudgetOptions = new Set([400, 800, 1200]);
 const substrateFitMax = 30000;
-const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material"]);
+const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "lp_mode"]);
 /* Filled from /api/catalogue at start-up: the substrate list the server knows. */
 const substrates = new Map();
 const state = {
@@ -151,6 +154,9 @@ function explainModelError(error) {
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
     return "These settings need more than the 120,000 integration steps the broadening grid allows. Narrow the 2θ calculation scan or lower the substrate coherent repeat count. Narrowing only the fit range does not help — the calculation scan has to shrink too.";
   }
+  if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
+    return "The thickness-domain/taper calculation exceeds the work limit. Narrow the calculation scan or reduce thickness spread, lattice gradient, or coherent repeat counts.";
+  }
   return message;
 }
 
@@ -163,7 +169,7 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",background:"Relative background",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
+  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",film_interface_width:"Film boundary taper width w",film_thickness_sigma:"Film thickness spread σN",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",background:"Relative background",background_slope:"Log background slope",lp_mode:"Polarization / illuminated length",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
 }
 
 function gcd3(h, k, l) {
@@ -224,7 +230,7 @@ function snapThicknessToModel() {
 
 function readForm() {
   const parameters = {hkl: $("hkl").value, film_material: $("film_material").value,
-                      substrate_material: $("substrate_material").value};
+                      substrate_material: $("substrate_material").value, lp_mode: $("lp_mode").value};
   const scan = {};
   for (const key of numericParameters) parameters[key] = numericField(key);
   parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl);
@@ -236,13 +242,14 @@ function validateConfig(input) {
   if (!input || typeof input !== "object" || !input.parameters || !input.scan) throw new Error("That settings file is not in the expected form.");
   const source = input.parameters, scanSource = input.scan;
   const parameters = {hkl: String(source.hkl), film_material: String(source.film_material),
-                      substrate_material: String(source.substrate_material ?? "SrTiO3")};
+                      substrate_material: String(source.substrate_material ?? "SrTiO3"), lp_mode: String(source.lp_mode ?? "none")};
   const scan = {};
   parameters.hkl = normaliseHkl(parameters.hkl);
   if (!materials.has(parameters.film_material)) throw new Error("That film material is not supported.");
   if (substrates.size && !substrates.has(parameters.substrate_material)) throw new Error("That substrate is not supported.");
+  if (!lpModes.has(parameters.lp_mode)) throw new Error("Choose a polarization / illuminated-length assumption from the list.");
   for (const key of numericParameters) {
-    const blankable = key === "film_lattice_gradient_a" || key === "substrate_lattice_c";
+    const blankable = optionalModelNumbers.has(key);
     const value = blankable && (source[key] === undefined || source[key] === "") ? 0 : source[key];
     if (value === "" || value === null || value === undefined) throw new Error(`${labelFor(key)} is missing.`);
     parameters[key] = Number(value);
@@ -269,6 +276,9 @@ function validateConfig(input) {
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("The film or the substrate must have at least one repeat.");
   if (parameters.fwhm_deg < 0) throw new Error("The instrumental width must be 0 or more.");
   if (parameters.background < 0 || parameters.background >= 1) throw new Error("The relative background must be at least 0 and below 1.");
+  if (parameters.film_interface_width < 0 || parameters.film_interface_width > 1000) throw new Error("Film boundary taper width w must be between 0 and 1,000 repeats.");
+  if (parameters.film_thickness_sigma < 0 || parameters.film_thickness_sigma > 20) throw new Error("Film thickness spread σN must be between 0 and 20 repeats.");
+  if (Math.abs(parameters.background_slope) > 1) throw new Error("Log background slope must be between −1 and +1 log₁₀/°.");
   if (!(0 < scan.xmin && scan.xmin < scan.xmax && scan.xmax < 180)) throw new Error("2θ start and end must increase, between 0° and 180°.");
   if (scan.step < 0.001 || scan.step > 1) throw new Error("The calculation step must be between 0.001° and 1°.");
   let count = Math.floor((scan.xmax - scan.xmin) / scan.step + 1e-9) + 1;
@@ -283,6 +293,7 @@ function applyConfig(config) {
   markCurveStale();
   $("hkl").value = config.parameters.hkl;
   $("film_material").value = config.parameters.film_material;
+  $("lp_mode").value = config.parameters.lp_mode;
   if (config.parameters.substrate_material && substrates.has(config.parameters.substrate_material)) {
     $("substrate_material").value = config.parameters.substrate_material;
   }
@@ -395,8 +406,9 @@ function captureFitSettings() {
 }
 
 function applyFitSettings(settings) {
+  // A legacy session must not inherit newly enabled fit variables from this tab.
+  for (const key of optionalFitKeys) $("fit_enable_" + key).checked = false;
   if (!settings || typeof settings !== "object") {
-    $("fit_enable_film_lattice_gradient_a").checked = false;
     refreshFitControls();
     return false;
   }
@@ -411,7 +423,6 @@ function applyFitSettings(settings) {
     for (const key of fitKeys) {
       const item = settings.variables[key];
       if (!item || typeof item !== "object") {
-        if (key === "film_lattice_gradient_a") $("fit_enable_film_lattice_gradient_a").checked = false;
         continue;
       }
       if (typeof item.enabled === "boolean") $("fit_enable_" + key).checked = item.enabled;
@@ -453,6 +464,9 @@ function validateFitBounds(key, low, high, scan) {
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("Zero offset bounds must be within ±5° and must keep the calculated angles inside 0–180°.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("Instrumental width bounds must be between 0 and 2°.");
   if (key === "background" && (low < 0 || high >= 1)) throw new Error("Relative background bounds must be at least 0 and below 1.");
+  if (key === "film_interface_width" && (low < 0 || high > 1000)) throw new Error("Film boundary taper width w bounds must be between 0 and 1,000 repeats.");
+  if (key === "film_thickness_sigma" && (low < 0 || high > 20)) throw new Error("Film thickness spread σN bounds must be between 0 and 20 repeats.");
+  if (key === "background_slope" && (low < -1 || high > 1)) throw new Error("Log background slope bounds must be between −1 and +1 log₁₀/°.");
 }
 
 function readFitSettings(config) {
@@ -832,6 +846,11 @@ function showFitResult(result, fit) {
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° fixed`;
+  for (const [key, id, unit] of [["film_interface_width", "fitInterfaceWidth", "repeats"], ["film_thickness_sigma", "fitThicknessSigma", "repeats"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+    const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "fitted" : "fixed";
+    $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
+  }
+  $("fitLpMode").textContent = Array.from($("lp_mode").options).find(option => option.value === result.config.parameters.lp_mode)?.textContent || "—";
   $("fitPeakFwhm").textContent = result.measured_peak_fwhm_deg === null || result.fitted_peak_fwhm_deg === null ? "not measurable" : `${result.measured_peak_fwhm_deg.toFixed(4)} → ${result.fitted_peak_fwhm_deg.toFixed(4)}°`;
   $("fitError").textContent = `${result.initial_log_rmse === null ? "—" : result.initial_log_rmse.toFixed(3)} → ${result.best_log_rmse.toFixed(3)}`;
   const sourceDescription = fit.sourcePoints > result.fit_points ? ` (sampled from ${fit.sourcePoints.toLocaleString("en")} points in that range)` : "";
@@ -847,6 +866,8 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"upper bound"});
   }
   const warnings = [];
+  if (result.config.parameters.film_interface_width > 0 && result.config.parameters.film_thickness_sigma > 0) warnings.push("Boundary taper w and thickness spread σN are both active. They can be correlated: compare the regional residuals from fitting each separately. Neither is an independent measurement of roughness.");
+  if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("The relative background is zero, so the log background slope has no effect. Do not interpret a fitted slope under this condition.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");
   if (!filmCountHit && fit.thickness_bounds_nm) {
     const repeatNm = projectedRepeatNm(result.config.parameters.film_lattice_a, result.config.parameters.hkl);

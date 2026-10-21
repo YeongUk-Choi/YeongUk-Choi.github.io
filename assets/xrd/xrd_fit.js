@@ -16,12 +16,13 @@
 const XRDFit = (() => {
   const FITTABLE = new Set(["film_lattice_a", "film_planes", "angle_offset_deg",
                             "fwhm_deg", "substrate_planes", "background",
-                            "film_lattice_gradient_a"]);
+                            "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
   const INTEGER = new Set(["film_planes", "substrate_planes"]);
   const MAX_FIT_POINTS = 1400;
   const MAX_REFERENCE_POINTS = 3001;
   const ORDER = ["film_lattice_a", "film_planes", "film_lattice_gradient_a",
-                 "angle_offset_deg", "fwhm_deg", "substrate_planes", "background"];
+                 "angle_offset_deg", "fwhm_deg", "substrate_planes", "background",
+                 "film_interface_width", "film_thickness_sigma", "background_slope"];
 
   let Core = null;
   function useCore(core) { Core = core; }
@@ -204,6 +205,13 @@ const XRDFit = (() => {
       } else if (name === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) {
         throw new Error("film_lattice_gradient_a bounds must lie in [-0.2, 0.2] Å");
       }
+      if (name === "film_interface_width" || name === "film_thickness_sigma") {
+        const maximum = name === "film_interface_width" ? 1000 : 20;
+        if (low < 0 || high > maximum) throw new Error(`${name} bounds must lie in [0, ${maximum}]`);
+      }
+      if (name === "background_slope" && (low < -1 || high > 1)) {
+        throw new Error("background_slope bounds must lie in [-1, 1]");
+      }
       result[name] = [low, high];
     }
     return result;
@@ -279,7 +287,7 @@ const XRDFit = (() => {
     const runningBest = {score: Infinity};
     const cache = new Map();
     const keyOf = (params) => ORDER.concat(["hkl", "film_material", "substrate_material",
-      "wavelength", "substrate_lattice_a", "substrate_lattice_c"])
+      "wavelength", "substrate_lattice_a", "substrate_lattice_c", "lp_mode"])
       .map((field) => params[field]).join("|");
 
     function candidate(values) {

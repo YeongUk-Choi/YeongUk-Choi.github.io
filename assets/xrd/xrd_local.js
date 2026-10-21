@@ -43,7 +43,8 @@ window.XRDLocal = (() => {
     const params = Object.assign({}, XRDCore.DEFAULTS, values);
     for (const key of ["wavelength", "film_lattice_a", "substrate_lattice_a",
                        "substrate_lattice_c", "angle_offset_deg", "fwhm_deg", "background",
-                       "film_lattice_gradient_a"]) params[key] = numeric(params[key], key);
+                       "film_lattice_gradient_a", "film_interface_width",
+                       "film_thickness_sigma", "background_slope"]) params[key] = numeric(params[key], key);
     for (const key of ["film_planes", "substrate_planes"]) {
       const count = numeric(params[key], key);
       const maximum = key === "substrate_planes" ? 30000 : 20000;
@@ -80,6 +81,14 @@ window.XRDLocal = (() => {
     }
     if (params.film_lattice_gradient_a && params.film_planes < 2) {
       throw new Error("A film lattice gradient needs at least two film repeats");
+    }
+    for (const [key, maximum] of [["film_interface_width", 1000], ["film_thickness_sigma", 20]]) {
+      if (params[key] < 0 || params[key] > maximum) throw new Error(`${key} must be in [0, ${maximum}]`);
+    }
+    if (Math.abs(params.background_slope) > 1) throw new Error("background_slope must be in [-1, 1]");
+    if (!["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized",
+          "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"].includes(params.lp_mode)) {
+      throw new Error("Unknown lp_mode");
     }
     return params;
   }
@@ -219,7 +228,8 @@ window.XRDLocal = (() => {
       throw new Error("Fit range must increase within 0–180°");
     }
     const allowed = new Set(["film_lattice_a", "film_planes", "angle_offset_deg", "fwhm_deg",
-                             "substrate_planes", "background", "film_lattice_gradient_a"]);
+                             "substrate_planes", "background", "film_lattice_gradient_a",
+                             "film_interface_width", "film_thickness_sigma", "background_slope"]);
     if (!fit.bounds || typeof fit.bounds !== "object" || Array.isArray(fit.bounds)) {
       throw new Error("fit.bounds must be an object");
     }
@@ -247,6 +257,13 @@ window.XRDLocal = (() => {
       }
       if (key === "film_lattice_gradient_a" && !(minimum >= -0.2 && maximum <= 0.2)) {
         throw new Error("film_lattice_gradient_a bounds must be in [-0.2,0.2] Å");
+      }
+      if (key === "film_interface_width" || key === "film_thickness_sigma") {
+        const limit = key === "film_interface_width" ? 1000 : 20;
+        if (!(minimum >= 0 && maximum <= limit)) throw new Error(`${key} bounds must be in [0,${limit}]`);
+      }
+      if (key === "background_slope" && !(minimum >= -1 && maximum <= 1)) {
+        throw new Error("background_slope bounds must be in [-1,1]");
       }
       bounds[key] = [minimum, maximum];
     }

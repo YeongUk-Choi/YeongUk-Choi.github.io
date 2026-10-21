@@ -28,13 +28,16 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background"];
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background", "background_slope"];
+const optionalModelNumbers = new Set(["film_lattice_gradient_a", "substrate_lattice_c", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background"];
+const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
 const fitBudgetOptions = new Set([400, 800, 1200]);
 const substrateFitMax = 30000;
-const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material"]);
+const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "lp_mode"]);
 /* Filled from /api/catalogue at start-up: the substrate list the server knows. */
 const substrates = new Map();
 const state = {
@@ -151,6 +154,9 @@ function explainModelError(error) {
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
     return "선택한 조건에서 계산 적분 격자가 120,000단계 한계를 넘었습니다. 2θ 계산 스캔 범위를 좁히거나 기판 유효 간섭 반복 수를 낮추세요. 피팅 범위를 좁힐 때는 계산 스캔 범위도 함께 조정하세요.";
   }
+  if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
+    return "두께 분포·테이퍼 계산량이 한계를 넘었습니다. 계산 스캔 범위를 좁히거나 두께 분포, 격자 구배 또는 유효 간섭 반복 수를 줄이세요.";
+  }
   return message;
 }
 
@@ -163,7 +169,7 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",background:"상대 배경",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
+  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",film_interface_width:"박막 경계 테이퍼 폭 w",film_thickness_sigma:"박막 두께 분포 σN",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",background:"상대 배경",background_slope:"로그 배경 기울기",lp_mode:"편광·조사 길이 가정",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
 }
 
 function gcd3(h, k, l) {
@@ -224,7 +230,7 @@ function snapThicknessToModel() {
 
 function readForm() {
   const parameters = {hkl: $("hkl").value, film_material: $("film_material").value,
-                      substrate_material: $("substrate_material").value};
+                      substrate_material: $("substrate_material").value, lp_mode: $("lp_mode").value};
   const scan = {};
   for (const key of numericParameters) parameters[key] = numericField(key);
   parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl);
@@ -236,13 +242,14 @@ function validateConfig(input) {
   if (!input || typeof input !== "object" || !input.parameters || !input.scan) throw new Error("설정 형식이 올바르지 않습니다.");
   const source = input.parameters, scanSource = input.scan;
   const parameters = {hkl: String(source.hkl), film_material: String(source.film_material),
-                      substrate_material: String(source.substrate_material ?? "SrTiO3")};
+                      substrate_material: String(source.substrate_material ?? "SrTiO3"), lp_mode: String(source.lp_mode ?? "none")};
   const scan = {};
   parameters.hkl = normaliseHkl(parameters.hkl);
   if (!materials.has(parameters.film_material)) throw new Error("지원하지 않는 박막 재료입니다.");
   if (substrates.size && !substrates.has(parameters.substrate_material)) throw new Error("지원하지 않는 기판입니다.");
+  if (!lpModes.has(parameters.lp_mode)) throw new Error("편광·조사 길이 가정을 목록에서 선택하세요.");
   for (const key of numericParameters) {
-    const blankable = key === "film_lattice_gradient_a" || key === "substrate_lattice_c";
+    const blankable = optionalModelNumbers.has(key);
     const value = blankable && (source[key] === undefined || source[key] === "") ? 0 : source[key];
     if (value === "" || value === null || value === undefined) throw new Error(`${labelFor(key)} 값이 없습니다.`);
     parameters[key] = Number(value);
@@ -269,6 +276,9 @@ function validateConfig(input) {
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("박막 또는 기판 반복 수 중 하나는 0보다 커야 합니다.");
   if (parameters.fwhm_deg < 0) throw new Error("기구 폭은 0 이상이어야 합니다.");
   if (parameters.background < 0 || parameters.background >= 1) throw new Error("상대 배경은 0 이상 1 미만이어야 합니다.");
+  if (parameters.film_interface_width < 0 || parameters.film_interface_width > 1000) throw new Error("박막 경계 테이퍼 폭 w는 0~1,000 반복 단위로 입력하세요.");
+  if (parameters.film_thickness_sigma < 0 || parameters.film_thickness_sigma > 20) throw new Error("박막 두께 분포 σN은 0~20 반복 단위로 입력하세요.");
+  if (Math.abs(parameters.background_slope) > 1) throw new Error("로그 배경 기울기는 −1~+1 log₁₀/° 안에 있어야 합니다.");
   if (!(0 < scan.xmin && scan.xmin < scan.xmax && scan.xmax < 180)) throw new Error("2θ 시작과 끝은 0°와 180° 사이에서 순서대로 입력하세요.");
   if (scan.step < 0.001 || scan.step > 1) throw new Error("계산 간격은 0.001°~1°로 입력하세요.");
   let count = Math.floor((scan.xmax - scan.xmin) / scan.step + 1e-9) + 1;
@@ -283,6 +293,7 @@ function applyConfig(config) {
   markCurveStale();
   $("hkl").value = config.parameters.hkl;
   $("film_material").value = config.parameters.film_material;
+  $("lp_mode").value = config.parameters.lp_mode;
   if (config.parameters.substrate_material && substrates.has(config.parameters.substrate_material)) {
     $("substrate_material").value = config.parameters.substrate_material;
   }
@@ -395,8 +406,9 @@ function captureFitSettings() {
 }
 
 function applyFitSettings(settings) {
+  // A legacy session must not inherit newly enabled fit variables from this tab.
+  for (const key of optionalFitKeys) $("fit_enable_" + key).checked = false;
   if (!settings || typeof settings !== "object") {
-    $("fit_enable_film_lattice_gradient_a").checked = false;
     refreshFitControls();
     return false;
   }
@@ -411,7 +423,6 @@ function applyFitSettings(settings) {
     for (const key of fitKeys) {
       const item = settings.variables[key];
       if (!item || typeof item !== "object") {
-        if (key === "film_lattice_gradient_a") $("fit_enable_film_lattice_gradient_a").checked = false;
         continue;
       }
       if (typeof item.enabled === "boolean") $("fit_enable_" + key).checked = item.enabled;
@@ -453,6 +464,9 @@ function validateFitBounds(key, low, high, scan) {
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("영점 보정 경계는 ±5° 이내이며 계산 각도가 0–180°를 벗어나지 않아야 합니다.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("기구 폭 경계는 0~2°로 입력하세요.");
   if (key === "background" && (low < 0 || high >= 1)) throw new Error("상대 배경 경계는 0 이상 1 미만이어야 합니다.");
+  if (key === "film_interface_width" && (low < 0 || high > 1000)) throw new Error("박막 경계 테이퍼 폭 w 경계는 0~1,000 반복 단위로 입력하세요.");
+  if (key === "film_thickness_sigma" && (low < 0 || high > 20)) throw new Error("박막 두께 분포 σN 경계는 0~20 반복 단위로 입력하세요.");
+  if (key === "background_slope" && (low < -1 || high > 1)) throw new Error("로그 배경 기울기 경계는 −1~+1 log₁₀/° 안에 있어야 합니다.");
 }
 
 function readFitSettings(config) {
@@ -832,6 +846,11 @@ function showFitResult(result, fit) {
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° 고정`;
+  for (const [key, id, unit] of [["film_interface_width", "fitInterfaceWidth", "반복 단위"], ["film_thickness_sigma", "fitThicknessSigma", "반복 단위"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+    const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "피팅" : "고정";
+    $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
+  }
+  $("fitLpMode").textContent = Array.from($("lp_mode").options).find(option => option.value === result.config.parameters.lp_mode)?.textContent || "—";
   $("fitPeakFwhm").textContent = result.measured_peak_fwhm_deg === null || result.fitted_peak_fwhm_deg === null ? "측정 불가" : `${result.measured_peak_fwhm_deg.toFixed(4)} → ${result.fitted_peak_fwhm_deg.toFixed(4)}°`;
   $("fitError").textContent = `${result.initial_log_rmse === null ? "—" : result.initial_log_rmse.toFixed(3)} → ${result.best_log_rmse.toFixed(3)}`;
   const sourceDescription = fit.sourcePoints > result.fit_points ? ` (원본 구간 ${fit.sourcePoints.toLocaleString("ko-KR")}점에서 추출)` : "";
@@ -847,6 +866,8 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"상한"});
   }
   const warnings = [];
+  if (result.config.parameters.film_interface_width > 0 && result.config.parameters.film_thickness_sigma > 0) warnings.push("경계 테이퍼 w와 두께 분포 σN을 함께 적용했습니다. 서로 상관될 수 있으므로 각각 따로 피팅한 구간별 잔차와 비교하세요. 어느 값도 거칠기의 독립 측정값은 아닙니다.");
+  if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("상대 배경이 0이므로 로그 배경 기울기는 계산에 영향을 주지 않습니다. 이 조건에서 기울기 피팅값을 해석하지 마세요.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");
   if (!filmCountHit && fit.thickness_bounds_nm) {
     const repeatNm = projectedRepeatNm(result.config.parameters.film_lattice_a, result.config.parameters.hkl);
