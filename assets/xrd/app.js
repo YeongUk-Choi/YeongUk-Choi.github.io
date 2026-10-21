@@ -1,6 +1,8 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+// Saved fit scores are only valid for the numerical model that produced them.
+const modelRevision = "gaussian-10sigma-v1";
 const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3"]);
 /* Any hkl may be typed: "110", "1 1 0", "(1,1,0)", or "0 0 6" for a hexagonal
    substrate. Four-index hexagonal input (hkil) drops the redundant third index. */
@@ -28,12 +30,12 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "background", "background_slope"];
-const optionalModelNumbers = new Set(["film_lattice_gradient_a", "substrate_lattice_c", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
+const optionalModelDefaults = {film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
 const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "substrate_planes", "background", "background_slope"];
-const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope"]);
+const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
 const fitBudgetOptions = new Set([400, 800, 1200]);
 const substrateFitMax = 30000;
@@ -152,7 +154,13 @@ function explainModelError(error) {
     return "이 조건에서는 계산 강도가 0입니다. 선택한 반사가 기판의 격자 소광으로 사라졌거나(허용 반사로 바꾸세요) 박막·기판 반복 수가 모두 0인지 확인하세요.";
   }
   if (/Gaussian broadening needs .* integration steps|integration grid|120,000 integration steps/i.test(message)) {
-    return "선택한 조건에서 계산 적분 격자가 120,000단계 한계를 넘었습니다. 2θ 계산 스캔 범위를 좁히거나 기판 유효 간섭 반복 수를 낮추세요. 피팅 범위를 좁힐 때는 계산 스캔 범위도 함께 조정하세요.";
+    return "선택한 조건에서 계산 적분 격자가 120,000단계 한계를 넘었습니다. 2θ 계산 스캔 범위, 기판 유효 간섭 반복 수 또는 넓은 분해능 성분 폭 배수 m을 줄이세요. 피팅 범위를 좁힐 때는 계산 스캔 범위도 함께 조정하세요.";
+  }
+  if (/Resolution (?:halo )?convolution is too large/i.test(message)) {
+    return "분해능 합성곱 계산량이 한계를 넘었습니다. FWHM, 유효 간섭 반복 수, 계산 지점 수 또는 넓은 성분의 폭 배수 m을 줄이세요.";
+  }
+  if (/Footprint broadening reaches zero incidence/i.test(message)) {
+    return "분해능 적분 범위가 2θ=0°에 닿아 조사 길이 근사를 사용할 수 없습니다. FWHM이나 폭 배수 m을 줄이거나 조사 길이 보정을 끄세요.";
   }
   if (/Film domain\/taper (calculation|integration) is too large/i.test(message)) {
     return "두께 분포·테이퍼 계산량이 한계를 넘었습니다. 계산 스캔 범위를 좁히거나 두께 분포, 격자 구배 또는 유효 간섭 반복 수를 줄이세요.";
@@ -169,7 +177,7 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",film_interface_width:"박막 경계 테이퍼 폭 w",film_thickness_sigma:"박막 두께 분포 σN",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",background:"상대 배경",background_slope:"로그 배경 기울기",lp_mode:"편광·조사 길이 가정",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
+  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",film_interface_width:"박막 경계 테이퍼 폭 w",film_thickness_sigma:"박막 두께 분포 σN",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",resolution_halo_fraction:"넓은 분해능 성분 비율 f",resolution_halo_width:"넓은 분해능 성분 폭 배수 m",background:"상대 배경",background_slope:"로그 배경 기울기",lp_mode:"편광·조사 길이 가정",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
 }
 
 function gcd3(h, k, l) {
@@ -249,9 +257,10 @@ function validateConfig(input) {
   if (substrates.size && !substrates.has(parameters.substrate_material)) throw new Error("지원하지 않는 기판입니다.");
   if (!lpModes.has(parameters.lp_mode)) throw new Error("편광·조사 길이 가정을 목록에서 선택하세요.");
   for (const key of numericParameters) {
-    const blankable = optionalModelNumbers.has(key);
-    const value = blankable && (source[key] === undefined || source[key] === "") ? 0 : source[key];
+    const blankable = Object.prototype.hasOwnProperty.call(optionalModelDefaults, key);
+    const value = blankable && (source[key] === undefined || source[key] === "") ? optionalModelDefaults[key] : source[key];
     if (value === "" || value === null || value === undefined) throw new Error(`${labelFor(key)} 값이 없습니다.`);
+    if (key.startsWith("resolution_halo_") && (!["number", "string"].includes(typeof value) || typeof value === "string" && !value.trim())) throw new Error(`${labelFor(key)}에 유한한 숫자를 입력하세요.`);
     parameters[key] = Number(value);
     if (!Number.isFinite(parameters[key])) throw new Error(`${labelFor(key)}에 유한한 숫자를 입력하세요.`);
   }
@@ -275,6 +284,8 @@ function validateConfig(input) {
   if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("박막 수직 격자 구배 Δa를 적용하려면 박막 반복 단위 N이 2 이상이어야 합니다.");
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("박막 또는 기판 반복 수 중 하나는 0보다 커야 합니다.");
   if (parameters.fwhm_deg < 0) throw new Error("기구 폭은 0 이상이어야 합니다.");
+  if (parameters.resolution_halo_fraction < 0 || parameters.resolution_halo_fraction > 0.2) throw new Error("넓은 분해능 성분 비율 f는 0~0.2로 입력하세요.");
+  if (parameters.resolution_halo_width < 1 || parameters.resolution_halo_width > 20) throw new Error("넓은 분해능 성분 폭 배수 m은 1~20으로 입력하세요.");
   if (parameters.background < 0 || parameters.background >= 1) throw new Error("상대 배경은 0 이상 1 미만이어야 합니다.");
   if (parameters.film_interface_width < 0 || parameters.film_interface_width > 1000) throw new Error("박막 경계 테이퍼 폭 w는 0~1,000 반복 단위로 입력하세요.");
   if (parameters.film_thickness_sigma < 0 || parameters.film_thickness_sigma > 20) throw new Error("박막 두께 분포 σN은 0~20 반복 단위로 입력하세요.");
@@ -440,6 +451,7 @@ function applyFitSettings(settings) {
 }
 
 function refreshFitControls() {
+  if ($("fit_enable_film_interface_width").checked) $("advancedFitVariables").open = true;
   for (const key of fitKeys) {
     const row = document.querySelector(`[data-fit-key="${key}"]`);
     row.classList.toggle("is-fixed", !$("fit_enable_" + key).checked);
@@ -463,6 +475,8 @@ function validateFitBounds(key, low, high, scan) {
   if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("박막 수직 격자 구배 Δa 경계는 −0.20~+0.20 Å 안에 있어야 합니다.");
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("영점 보정 경계는 ±5° 이내이며 계산 각도가 0–180°를 벗어나지 않아야 합니다.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("기구 폭 경계는 0~2°로 입력하세요.");
+  if (key === "resolution_halo_fraction" && (low < 0 || high > 0.2)) throw new Error("넓은 분해능 성분 비율 f 경계는 0~0.2로 입력하세요.");
+  if (key === "resolution_halo_width" && (low < 1 || high > 20)) throw new Error("넓은 분해능 성분 폭 배수 m 경계는 1~20으로 입력하세요.");
   if (key === "background" && (low < 0 || high >= 1)) throw new Error("상대 배경 경계는 0 이상 1 미만이어야 합니다.");
   if (key === "film_interface_width" && (low < 0 || high > 1000)) throw new Error("박막 경계 테이퍼 폭 w 경계는 0~1,000 반복 단위로 입력하세요.");
   if (key === "film_thickness_sigma" && (low < 0 || high > 20)) throw new Error("박막 두께 분포 σN 경계는 0~20 반복 단위로 입력하세요.");
@@ -846,7 +860,7 @@ function showFitResult(result, fit) {
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° 고정`;
-  for (const [key, id, unit] of [["film_interface_width", "fitInterfaceWidth", "반복 단위"], ["film_thickness_sigma", "fitThicknessSigma", "반복 단위"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "반복 단위"], ["film_thickness_sigma", "fitThicknessSigma", "반복 단위"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
     const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "피팅" : "고정";
     $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
   }
@@ -866,6 +880,11 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"상한"});
   }
   const warnings = [];
+  const haloFraction = result.config.parameters.resolution_halo_fraction;
+  const haloWidth = result.config.parameters.resolution_halo_width;
+  if (haloFraction === 0 && fit.bounds?.resolution_halo_width) warnings.push("넓은 분해능 성분 비율 f가 0이므로 폭 배수 m은 결정되지 않습니다. 이 조건의 m 피팅값을 해석하지 마세요.");
+  if (haloWidth === 1 && fit.bounds?.resolution_halo_fraction) warnings.push("폭 배수 m이 1이면 두 Gaussian 성분이 같아 비율 f는 결정되지 않습니다.");
+  if (finalFwhm === 0 && (haloFraction > 0 || fit.bounds?.resolution_halo_fraction || fit.bounds?.resolution_halo_width)) warnings.push("기구 FWHM이 0이므로 넓은 분해능 성분은 계산에 영향을 주지 않습니다. f와 m 피팅값을 해석하지 마세요.");
   if (result.config.parameters.film_interface_width > 0 && result.config.parameters.film_thickness_sigma > 0) warnings.push("경계 테이퍼 w와 두께 분포 σN을 함께 적용했습니다. 서로 상관될 수 있으므로 각각 따로 피팅한 구간별 잔차와 비교하세요. 어느 값도 거칠기의 독립 측정값은 아닙니다.");
   if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("상대 배경이 0이므로 로그 배경 기울기는 계산에 영향을 주지 않습니다. 이 조건에서 기울기 피팅값을 해석하지 마세요.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");
@@ -1339,7 +1358,7 @@ async function ensureCurrentSimulation() {
 async function saveProject() {
   try {
     if (!await ensureCurrentSimulation()) return;
-    const project = {format:"xrd-studio-project-v1",parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
+    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
     project.fit_settings = captureFitSettings();
     if (state.fitResult && !state.fitResult.stale) project.fit_result = state.fitResult;
@@ -1361,7 +1380,10 @@ async function loadProject(file) {
     else {state.measurement = null; $("dataName").textContent = "측정 데이터 없음"; $("dataMeta").textContent = "2θ(°), 강도 · 2열 파일";}
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
-      if (measurement && project.fit_result) {
+      if (measurement && project.fit_result && project.model_revision !== modelRevision) {
+        setFitProgress("저장된 피팅의 계산 기준이 현재와 다릅니다. 다시 피팅하세요.");
+      }
+      if (measurement && project.fit_result && project.model_revision === modelRevision) {
         try {
           const saved = project.fit_result;
           const result = validateFitResponse(saved, config.scan);

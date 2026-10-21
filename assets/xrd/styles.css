@@ -47,3 +47,5 @@ button:disabled{cursor:wait;opacity:.7}
 .fit-budget{margin:0 0 12px}.fit-budget select{background:#f8fbff}
 .thickness-conversion{font-size:10px;color:#71849b;font-weight:600;line-height:1.4}.fit-conversion-note{margin:5px 0 0 23px;color:#8292a5;font-size:10px;line-height:1.45}.fit-result-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.fit-result-grid strong{font-size:15px}.fit-result-grid small{display:block;color:#71849b;font-size:10px;line-height:1.4;margin-top:4px}.fit-result>p.fit-merit{color:#315c90;background:#edf4ff;border-radius:7px;padding:7px 10px;margin-top:9px}.fit-merit[hidden]{display:none}
 @media(max-width:1120px){.fit-result-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.advanced-fit{border:1px solid #e3e9ef;border-radius:8px;padding:10px;margin-top:12px}.advanced-fit summary{cursor:pointer;color:#526b86;font-size:11px;font-weight:750}.advanced-fit .fit-variable{border-bottom:0}.advanced-fit .fit-hint{margin:6px 0 0}

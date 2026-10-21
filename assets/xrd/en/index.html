@@ -99,6 +99,12 @@
             <label class="field">2θ zero offset (°)<input id="angle_offset_deg" name="angle_offset_deg" type="number" step="any" value="0" required></label>
             <label class="field">instrumental FWHM (°)<input id="fwhm_deg" name="fwhm_deg" type="number" step="any" value="0.05" required></label>
           </div>
+          <div class="field-grid two">
+            <label class="field">Broad resolution component fraction f<input id="resolution_halo_fraction" name="resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0" required></label>
+            <label class="field">Broad resolution component width multiplier m<input id="resolution_halo_width" name="resolution_halo_width" type="number" step="any" min="1" max="20" value="3" required></label>
+          </div>
+          <p class="small-note">Mix two unit-area Gaussians as (1 − f)·G(σ) + f·G(mσ). f is the integrated fraction of the broad component (0.005 = 0.5%). Its FWHM is m times the FWHM above. At f = 0, m has no effect; at FWHM = 0, neither setting has an effect.</p>
+          <p class="small-note">This model describes a resolution profile; it is not a measured instrument function. Substrate diffraction, mosaicity and other causes can produce similar profiles. A better fit alone does not establish an instrumental origin.</p>
           <label class="field">Relative background<input id="background" name="background" type="number" step="any" value="1e-8" required></label>
           <label class="field">Log background slope <span>(log₁₀/°)</span><input id="background_slope" name="background_slope" type="number" step="any" min="-1" max="1" value="0" required></label>
           <p class="small-note">Zero slope gives a constant background. With a slope, the relative background is its value at 2θ = 33° before normalization: b(2θ) = b(33°) × 10^[slope × (2θ − 33°)]. The combined curve is normalized again. A zero relative background makes the slope ineffective.</p>
@@ -143,10 +149,6 @@
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ zero offset <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_angle_offset_deg" type="number" step="any" value="-1" aria-label="2θ zero offset lower bound"><span>–</span><input id="fit_high_angle_offset_deg" type="number" step="any" value="1" aria-label="2θ zero offset upper bound"></div>
             </div>
-            <div class="fit-variable" data-fit-key="film_interface_width">
-              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>Film boundary taper width w <small>repeats</small></span></label>
-              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="Film boundary taper width lower bound"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="Film boundary taper width upper bound"></div>
-            </div>
             <div class="fit-variable" data-fit-key="film_thickness_sigma">
               <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>Film thickness spread σN <small>repeats</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="Film thickness spread lower bound"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="Film thickness spread upper bound"></div>
@@ -154,6 +156,14 @@
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>Instrumental Gaussian FWHM <small>°</small></span></label>
               <div class="fit-bounds"><input id="fit_low_fwhm_deg" type="number" step="any" value="0.005" aria-label="instrumental width lower bound"><span>–</span><input id="fit_high_fwhm_deg" type="number" step="any" value="0.3" aria-label="instrumental width upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="resolution_halo_fraction">
+              <label class="fit-toggle"><input id="fit_enable_resolution_halo_fraction" type="checkbox"><span>Broad resolution component fraction f</span></label>
+              <div class="fit-bounds"><input id="fit_low_resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0" aria-label="Broad resolution component fraction lower bound"><span>–</span><input id="fit_high_resolution_halo_fraction" type="number" step="any" min="0" max="0.2" value="0.02" aria-label="Broad resolution component fraction upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="resolution_halo_width">
+              <label class="fit-toggle"><input id="fit_enable_resolution_halo_width" type="checkbox"><span>Broad resolution component width multiplier m</span></label>
+              <div class="fit-bounds"><input id="fit_low_resolution_halo_width" type="number" step="any" min="1" max="20" value="1" aria-label="Broad resolution component width multiplier lower bound"><span>–</span><input id="fit_high_resolution_halo_width" type="number" step="any" min="1" max="20" value="8" aria-label="Broad resolution component width multiplier upper bound"></div>
             </div>
             <div class="fit-variable" data-fit-key="substrate_planes">
               <label class="fit-toggle"><input id="fit_enable_substrate_planes" type="checkbox"><span>Substrate coherent repeats <small>whole number</small></span></label>
@@ -168,6 +178,14 @@
               <div class="fit-bounds"><input id="fit_low_background_slope" type="number" step="any" min="-1" max="1" value="-0.1" aria-label="Log background slope lower bound"><span>–</span><input id="fit_high_background_slope" type="number" step="any" min="-1" max="1" value="0.1" aria-label="Log background slope upper bound"></div>
             </div>
           </div>
+          <details class="advanced-fit" id="advancedFitVariables">
+            <summary>Advanced fit variables · boundary taper</summary>
+            <div class="fit-variable" data-fit-key="film_interface_width">
+              <label class="fit-toggle"><input id="fit_enable_film_interface_width" type="checkbox"><span>Film boundary taper width w <small>repeats</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_interface_width" type="number" step="any" min="0" max="1000" value="0" aria-label="Film boundary taper width lower bound"><span>–</span><input id="fit_high_film_interface_width" type="number" step="any" min="0" max="1000" value="4" aria-label="Film boundary taper width upper bound"></div>
+            </div>
+            <p class="fit-hint">The taper width converged to zero for the reference SRO/STO 002 scan. Check the evidence before enabling it.</p>
+          </details>
           <p class="fit-hint">Boundary taper w and thickness spread σN can produce similar changes. Fit them separately and compare regional residuals before using both. A better score alone does not establish the cause.</p>
           <p class="fit-hint">If a selected parameter starts outside its bounds, the fit begins at the nearest bound. Thickness is converted to an integer repeat count N using the mean a and the hkl. Δa is fixed by default, and fitting it does not make it an independently measured strain. The substrate repeat count accepts up to 30,000, but a wide calculation scan can reach the integration limit. The instrumental FWHM is not the full width of the measured peak. The reflection, the wavelength and the material are assumptions you are making.</p>
           <label class="field fit-budget">Search budget
@@ -212,6 +230,8 @@
           <div><span id="fitGradientLabel">Film out-of-plane lattice gradient Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">Repeats N (fitted)</span><strong id="fitPlanes">—</strong></div>
           <div><span>Instrumental Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
+          <div><span>Broad resolution component fraction f</span><strong id="fitHaloFraction">—</strong></div>
+          <div><span>Broad resolution component width multiplier m</span><strong id="fitHaloWidth">—</strong></div>
           <div><span>Film boundary taper width w</span><strong id="fitInterfaceWidth">—</strong></div>
           <div><span>Film thickness spread σN</span><strong id="fitThicknessSigma">—</strong></div>
           <div><span>Log background slope</span><strong id="fitBackgroundSlope">—</strong></div>
