@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101824">
+<meta name="robots" content="noindex, nofollow">
+<title>XRD Studio — YeongUk Choi</title>
+<link rel="icon" href="assets/img/software/xrd-studio-icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/css/xrd-gate.css">
+<script src="data/ppms.js" defer></script>
+<script src="data/xrd.js" defer></script>
+<script src="assets/js/xrd-gate.js" defer></script>
+</head>
+<body>
+<main id="gate" class="gate">
+  <div class="gate-nav"><a class="back" href="software.html" data-text="back">← Software</a><button id="gate-language" type="button">한국어</button></div>
+  <div class="gate-card">
+    <img class="app-icon" src="assets/img/software/xrd-studio-icon.svg" alt="" width="76" height="76">
+    <p class="eyebrow" data-text="eyebrow">THIN-FILM X-RAY DIFFRACTION</p>
+    <h1>XRD Studio</h1>
+    <p class="description" data-text="description">Simulate and fit symmetric θ–2θ scans in your browser. Enter the access code shared with your lab, or request one from YeongUk Choi.</p>
+    <form id="unlock-form">
+      <label for="access-code" data-text="code">Access code</label>
+      <div class="form-row">
+        <input id="access-code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="gate-status">
+        <button id="unlock-button" type="submit" data-text="open">Open XRD Studio</button>
+      </div>
+    </form>
+    <p id="gate-status" class="status" role="status" aria-live="polite"></p>
+    <button id="refresh-button" type="button" data-text="refresh" hidden>Refresh page</button>
+    <a class="request" href="mailto:aowlr8945@gmail.com?subject=XRD%20Studio%20access%20request" data-text="request">Request an access code ↗</a>
+    <noscript><p>JavaScript is required. JavaScript를 켜 주세요.</p></noscript>
+  </div>
+</main>
+<div id="workspace" class="workspace" hidden>
+  <div class="workspace-bar">
+    <a href="software.html" data-text="back">← Software</a>
+    <span>XRD Studio</span>
+    <button id="lock-button" type="button" data-text="lock">Lock this tab</button>
+  </div>
+  <iframe id="studio-frame" title="XRD Studio application" referrerpolicy="no-referrer"></iframe>
+</div>
+</body>
+</html>

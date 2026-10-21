@@ -10,7 +10,7 @@
   function card(it) {
     const prep = it.status === "preparing";
     const links = (it.links || []).map(l =>
-      `<a class="btn small${l.primary ? " primary" : ""}" href="${esc(l.href)}"${/^https?:/.test(l.href) ? ' target="_blank" rel="noopener"' : " download"}>${esc(l.label)}</a>`).join("");
+      `<a class="btn small${l.primary ? " primary" : ""}" href="${esc(l.href)}"${/^https?:/.test(l.href) ? ' target="_blank" rel="noopener"' : l.page ? "" : " download"}>${esc(l.label)}</a>`).join("");
     const meta = [it.version && `v${esc(it.version)}`, it.date && esc(it.date), it.license ? esc(it.license) : "ask before reuse"]
       .filter(Boolean).join(" \u00b7 ");
     /* The screen first, then what it does: a reader decides whether to care from the picture,
@@ -18,7 +18,7 @@
     /* With a screen to show, the name belongs over it like an app tile; the right-hand
        column then opens straight into what the thing does. */
     const head = `<div class="sw-head">
-        ${it.icon ? `<img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54">` : ""}
+        ${it.icon ? (it.launch ? `<a href="${esc(it.launch)}" aria-label="Open ${esc(it.name)}"><img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54"></a>` : `<img class="sw-icon" src="${esc(it.icon)}" alt="" width="54" height="54">`) : ""}
         <div class="sw-idname">
           <span class="sw-name">${esc(it.name)}</span>
           ${it.sub ? `<span class="sw-sub">${esc(it.sub)}</span>`

@@ -19,6 +19,12 @@
  *     Copy the /exec URL into data/ppms.js → apiUrl.
  *  After editing this file you must Deploy → Manage deployments → edit → New version, or the
  *  old code keeps running.
+ *
+ * XRD Studio access uses separate Script Properties: XRD_CODE (shared app password),
+ * XRD_APP_KEY (canonical base64 encoding of the 32-byte encryption key), and XRD_APP_VERSION
+ * (the encrypted build's 64-character lowercase SHA-256 identifier). Set these in the
+ * Apps Script editor, never in this file. Only a POST form with action=xrdkey and the
+ * correct XRD_CODE receives the key. Keep XRD_CODE different from EDIT_CODE/PUSH_CODE.
  */
 
 var SHEET = 'movements';
@@ -86,6 +92,7 @@ function actionSheet() {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  if (p.action === 'xrdkey') return json({ ok: false, error: 'Use POST for XRD access.' });
   if (p.action === 'telemetry') return json(telemetryRead(p));
   return handle(p);
 }
@@ -99,7 +106,64 @@ function doPost(e) {
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) });
   }
-  return handle((e && e.parameter) || {});
+  var p = (e && e.parameter) || {};
+  if (p.action === 'xrdkey') return handleXrdKey(p);
+  return handle(p);
+}
+
+/* ---- XRD encrypted application key ----
+   The same five-failure/ten-minute rule as inventory editing, but separate counters.
+   Script Properties retain the XRD counter until expiry even if Apps Script evicts its
+   cache. The script lock serializes the read/increment/write across concurrent requests. */
+function handleXrdKey(p) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    try {
+      var props = PropertiesService.getScriptProperties();
+      requireCode(p.code, 'XRD_CODE', 'xrd_', propertyCounter(props));
+      var key = props.getProperty('XRD_APP_KEY');
+      var build = props.getProperty('XRD_APP_VERSION');
+      var validKey = typeof key === 'string' && /^[A-Za-z0-9+/]{43}=$/.test(key);
+      if (validKey) {
+        try {
+          var bytes = Utilities.base64Decode(key);
+          validKey = bytes.length === 32 && Utilities.base64Encode(bytes) === key;
+        } catch (err) { validKey = false; }
+      }
+      if (!validKey || typeof build !== 'string' || !/^[0-9a-f]{64}$/.test(build)) {
+        throw new Error('XRD app is not configured on the server.');
+      }
+      return json({ ok: true, key: key, version: 1, build: build });
+    } finally { lock.releaseLock(); }
+  } catch (err) {
+    return json({ ok: false, error: String(err.message || err) });
+  }
+}
+
+/* CacheService-compatible interface, used only while handleXrdKey holds its lock. Each
+   property has its own expiry, so the existing requireCode rules stay the same. */
+function propertyCounter(props) {
+  return {
+    get: function (name) {
+      var raw = props.getProperty(name);
+      if (!raw) return null;
+      var entry;
+      try { entry = JSON.parse(raw); } catch (err) {
+        throw new Error('XRD access counter is invalid on the server.');
+      }
+      if (!entry || typeof entry.expires !== 'number' || !isFinite(entry.expires) ||
+          typeof entry.value !== 'string') {
+        throw new Error('XRD access counter is invalid on the server.');
+      }
+      if (Date.now() >= entry.expires) { props.deleteProperty(name); return null; }
+      return entry.value;
+    },
+    put: function (name, value, seconds) {
+      props.setProperty(name, JSON.stringify({ value: value, expires: Date.now() + seconds * 1000 }));
+    },
+    remove: function (name) { props.deleteProperty(name); }
+  };
 }
 
 /* ---- telemetry from the lab PC ---- */
@@ -261,15 +325,17 @@ function handle(p) {
 /* ---- code check with a shared cool-off. Apps Script sees no client IP, so the counter is
    global: five wrong tries lock everyone out for ten minutes. That is acceptable here —
    one person edits this — and it is what makes a short code safe to brute force. ---- */
-function requireCode(code) {
-  var cache = CacheService.getScriptCache();
-  if (cache.get('lockout')) throw new Error('Too many wrong codes. Try again in a few minutes.');
-  var want = PropertiesService.getScriptProperties().getProperty('EDIT_CODE');
-  if (!want) throw new Error('EDIT_CODE is not set on the server.');
-  if (String(code || '') === want) { cache.remove('fails'); return; }
-  var n = (Number(cache.get('fails')) || 0) + 1;
-  cache.put('fails', String(n), LOCK_MIN * 60);
-  if (n >= FAIL_LIMIT) cache.put('lockout', '1', LOCK_MIN * 60);
+function requireCode(code, property, prefix, counter) {
+  property = property || 'EDIT_CODE';
+  prefix = prefix || '';
+  var cache = counter || CacheService.getScriptCache();
+  if (cache.get(prefix + 'lockout')) throw new Error('Too many wrong codes. Try again in a few minutes.');
+  var want = PropertiesService.getScriptProperties().getProperty(property);
+  if (!want) throw new Error(property + ' is not set on the server.');
+  if (String(code || '') === want) { cache.remove(prefix + 'fails'); return; }
+  var n = (Number(cache.get(prefix + 'fails')) || 0) + 1;
+  cache.put(prefix + 'fails', String(n), LOCK_MIN * 60);
+  if (n >= FAIL_LIMIT) cache.put(prefix + 'lockout', '1', LOCK_MIN * 60);
   throw new Error('Wrong code.');
 }
 
