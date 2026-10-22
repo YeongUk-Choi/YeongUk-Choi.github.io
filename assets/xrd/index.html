@@ -12,6 +12,7 @@
   <script src="xrd_fit.js" defer></script>
   <script src="xrd_fringes.js" defer></script>
   <script src="xrd_peaks.js" defer></script>
+  <script src="xrd_intensity.js" defer></script>
   <script src="xrd_local.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -49,7 +50,16 @@
         <h2 id="data-title">측정 데이터</h2>
         <div class="file-name" id="dataName">예시 데이터를 불러오는 중…</div>
         <div class="file-meta" id="dataMeta">2θ(°), 강도 · 2열 파일</div>
-        <p class="small-note">.dat / .csv / .txt · 원본 강도는 저장 및 내보내기에 보존됩니다.</p>
+        <p class="small-note">.dat / .csv / .txt · 원본 열은 설정 파일에 보존됩니다. 분석에는 변환한 선형 강도를 사용합니다.</p>
+        <label class="field">파일의 세기 축<select id="intensity_scale"><option value="linear">선형 (기본)</option><option value="log10">log₁₀(I)</option><option value="log10_normalized">정규화된 log₁₀(I)</option></select></label>
+        <label class="field" id="intensityDecadesField" hidden>로그 범위 (데카드 수)<input id="intensity_decades" type="number" min="1" max="20" step="any" value="8"></label>
+        <p class="small-note" id="intensityDecadesNote" hidden>8은 출발값이며 추정값이 아닙니다. 내보낼 때 사용한 데카드 수를 입력하세요. 정규화에서 잃은 절대 세기는 복원되지 않습니다.</p>
+        <label class="field" id="negativePolicyField">선형 데이터의 음수 처리<select id="negative_policy"><option value="reject">음수가 있으면 선택 대기</option><option value="clip">음수를 0으로 (clip)</option><option value="shift">최솟값을 0으로 이동 (shift)</option></select></label>
+        <p class="small-note">배경을 뺀 선형 데이터에는 음수가 있을 수 있습니다. 파일의 저장 축을 확인한 뒤 처리하세요. 그래프의 로그 표시 버튼과는 별개입니다.</p>
+        <p class="small-note" id="intensityHint" hidden>정규화된 log 축일 수 있습니다. 자동 변환하지 않습니다. 저장 축과 데카드 수를 확인하세요.</p>
+        <button class="button outline" id="applyIntensity" type="button">세기 축 적용</button>
+        <p class="small-note" id="intensityStatus" role="status" aria-live="polite">선형 강도가 기본입니다.</p>
+        <p class="small-note intensity-provenance" id="intensitySummary">적용된 세기 변환 없음</p>
       </section>
 
       <form id="settingsForm" novalidate>
@@ -233,14 +243,16 @@
         <div class="scan-badge" id="scanBadge">계산 준비 중</div>
       </div>
 
+      <p class="small-note intensity-provenance">적용된 세기 변환 없음</p>
       <div class="metrics" aria-label="주요 결과">
-        <div class="metric-card observed"><div class="metric-label">측정 주 피크 <span>표시 구간</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">최고 원본 강도 위치</div></div>
+        <div class="metric-card observed"><div class="metric-label">측정 주 피크 <span>표시 구간</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">최고 선형 강도 위치</div></div>
         <div class="metric-card substrate"><div class="metric-label">기판 예상 피크</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">입력 구조에 따른 Bragg 위치</div></div>
         <div class="metric-card film"><div class="metric-label">박막 예상 피크</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">평균 격자에 따른 Bragg 위치</div></div>
         <div class="metric-card error"><div class="metric-label">화면 로그 RMSE <span>표시 구간</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">현재 그래프 범위 기준</div></div>
       </div>
 
       <section class="fit-result" id="fitResult" aria-labelledby="fit-result-title" hidden>
+        <p class="small-note intensity-provenance">적용된 세기 변환 없음</p>
         <div class="fit-result-top"><div><div class="eyebrow blue">BEST FIT</div><h3 id="fit-result-title">자동 피팅 결과</h3></div><span id="fitResultRange">—</span></div>
         <p class="fit-stale" id="fitStale" hidden>설정이 변경되었습니다. 아래 값은 이전 피팅 결과입니다. 변경한 설정으로 피팅을 다시 실행하세요.</p>
         <div class="fit-result-grid">
@@ -297,6 +309,7 @@
       </section>
 
       <section class="residual-card" id="residualCard" aria-labelledby="residual-title" hidden>
+        <p class="small-note intensity-provenance">적용된 세기 변환 없음</p>
         <div class="residual-heading"><div><div class="eyebrow blue">FIT DIAGNOSTIC</div><h3 id="residual-title">피팅 구간 잔차</h3></div><strong id="residualOverall">—</strong></div>
         <p class="residual-explanation">잔차 = log₁₀(계산 상대 강도) − log₁₀(측정 상대 강도). 0이 일치, +1은 계산이 10배 높음을 뜻합니다. 각 곡선은 피팅 구간 최대값으로 정규화합니다.</p>
         <div class="residual-plot-wrap" id="residualPlotWrap"><canvas id="residualCanvas" role="img" aria-label="피팅 범위의 각도별 계산 대 측정 로그 강도 잔차"></canvas></div>
@@ -305,6 +318,7 @@
       </section>
 
       <section class="fringe-card" id="fringeCard" aria-labelledby="fringe-title">
+        <p class="small-note intensity-provenance">적용된 세기 변환 없음</p>
         <div class="residual-heading"><div><div class="eyebrow blue">MEASURED FRINGES</div><h3 id="fringe-title">프린지 간격으로 두께 비교</h3></div><button class="button outline" id="fringeUseVisible" type="button">현재 그래프 범위 사용</button></div>
         <p class="residual-explanation">기판 주 피크를 피하고 반복 무늬가 보이는 측정 구간을 지정하세요. q = 4π sinθ/λ, 두께 = 2π/Δq를 사용합니다. 입력한 파장에 비례해 추정 두께가 변합니다. 피팅 목적함수는 바꾸지 않습니다.</p>
         <div class="field-grid two fringe-roi">
@@ -323,6 +337,7 @@
       </section>
 
       <section class="fringe-card peak-card" id="peakCard" aria-labelledby="peak-title">
+        <p class="small-note intensity-provenance">적용된 세기 변환 없음</p>
         <div class="residual-heading"><div><div class="eyebrow blue">DESCRIPTIVE PEAKS</div><h3 id="peak-title">피크 모양 분해</h3></div><button class="button outline" id="peakUseVisible" type="button">현재 그래프 범위 사용</button></div>
         <p class="residual-explanation">선택 구간을 1개 또는 2개의 pseudo-Voigt 성분과 선형 배경으로 기술합니다. pseudo-Voigt는 Gaussian과 Lorentzian을 섞은 피크 모양입니다. 이것은 물리적인 다층 모델이 아니며 위의 박막 시뮬레이션을 바꾸지 않습니다.</p>
         <div class="field-grid three peak-inputs">

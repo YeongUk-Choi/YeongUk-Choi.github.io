@@ -51,6 +51,11 @@ function filmMetadata(material) {
 }
 const state = {
   measurement: null,
+  measurementSource: null,
+  intensityRequest: 0,
+  importRequest: 0,
+  intensityPending: false,
+  intensityAdjustScan: false,
   simulation: null,
   config: null,
   configSignature: "",
@@ -92,11 +97,11 @@ function setFitProgress(message, kind = "") {
 function setFitBusy(busy) {
   state.fitBusy = busy;
   $("runFit").classList.toggle("is-busy", busy);
-  for (const node of document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button, .head-actions button")) node.disabled = busy;
+  for (const node of document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button, .head-actions button, .data-card input, .data-card select, .data-card button")) node.disabled = busy;
   // the one control that has to stay alive while everything else is locked
   const cancel = $("cancelFit");
   if (cancel) { cancel.hidden = !busy; cancel.disabled = false; }
-  if (!busy) refreshFitControls();
+  if (!busy) { refreshFitControls(); refreshIntensityControls(); }
 }
 
 /* A fit runs for about a minute in one blocking request, so the page asks the
@@ -855,28 +860,32 @@ function projectFitStart(config, fit) {
   return {parameters, adjusted};
 }
 
-function validateCurve(raw, filename = "측정 데이터") {
+function validateCurve(raw, filename = "측정 데이터", {allowSigned = false} = {}) {
   if (!raw || typeof raw !== "object") throw new Error("곡선 데이터를 읽을 수 없습니다.");
-  const angles = raw.angles || raw.two_theta_deg;
-  const intensities = raw.intensities || raw.intensity_raw;
+  const angleInput = raw.angles || raw.two_theta_deg;
+  const intensityInput = raw.intensities || raw.intensity_raw;
+  const angles = Array.isArray(angleInput) ? angleInput.slice() : angleInput;
+  const intensities = Array.isArray(intensityInput) ? intensityInput.slice() : intensityInput;
   if (!Array.isArray(angles) || !Array.isArray(intensities) || angles.length < 2 || angles.length !== intensities.length) throw new Error("각도와 강도는 길이가 같은 2개 이상의 배열이어야 합니다.");
   if (angles.length > 1000000) throw new Error("데이터가 너무 큽니다. 최대 1,000,000점까지 읽을 수 있습니다.");
   let previous = -Infinity, positive = false;
   for (let i = 0; i < angles.length; i++) {
-    const x = Number(angles[i]), y = Number(intensities[i]);
-    if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || x >= 180 || x <= previous || y < 0) throw new Error("측정 데이터에는 0–180° 범위에서 증가하는 각도와 음수가 아닌 유한한 강도가 필요합니다.");
+    const x = angles[i], y = intensities[i];
+    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || x >= 180 || x <= previous || (!allowSigned && y < 0)) throw new Error("측정 데이터에는 증가하는 유한한 각도와 유한한 강도가 필요합니다. 분석 강도에는 음수가 남을 수 없습니다.");
     angles[i] = x; intensities[i] = y; previous = x;
     if (y > 0) positive = true;
   }
-  if (!positive) throw new Error("측정 데이터에 양의 강도가 없습니다.");
+  if (!allowSigned && !positive) throw new Error("측정 데이터에 양의 강도가 없습니다.");
   return {angles, intensities, filename: String(raw.filename || filename)};
 }
 
-function setMeasurement(raw, {adjustScan = true} = {}) {
+function setMeasurement(raw, {adjustScan = true, clearInputs = true} = {}) {
   const measurement = validateCurve(raw);
+  measurement.intensity_transform = raw.intensity_transform;
   state.measurement = measurement;
-  invalidatePeaks({clearInputs:true});
-  invalidateFringes({clearInputs:true});
+  state.intensityPending = false;
+  invalidatePeaks({clearInputs});
+  invalidateFringes({clearInputs});
   hideFitResult({clearResidual:true});
   setFitProgress(`피팅 대기 중 · 최대 ${Number($("fit_evaluations").value).toLocaleString("ko-KR")}회 모델 평가`);
   const {angles, intensities, filename} = measurement;
@@ -897,7 +906,98 @@ function setMeasurement(raw, {adjustScan = true} = {}) {
       $("fit_max").value = String(xmax);
     }
   }
+  state.stats = null;
+  refreshIntensityControls();
+  updateMetrics();
+  renderResidualDiagnostics();
   requestDraw();
+}
+
+/* Raw imported values are retained separately. Only this ingestion boundary
+   converts axes; every analysis continues to consume nonnegative linear values. */
+function readIntensitySettings() {
+  const intensity_scale = $("intensity_scale").value;
+  const intensity_decades = Number($("intensity_decades").value);
+  if (!$("intensity_decades").value.trim() || !Number.isFinite(intensity_decades) || intensity_decades < 1 || intensity_decades > 20) throw new Error("데카드 수는 1–20의 유한한 값이어야 합니다.");
+  return {intensity_scale, intensity_decades, negative_policy:$("negative_policy").value};
+}
+function applyIntensitySettings(saved = {}) {
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error("저장된 세기 축 설정이 올바르지 않습니다.");
+  const scale = saved.intensity_scale === undefined ? "linear" : saved.intensity_scale, policy = saved.negative_policy === undefined ? "reject" : saved.negative_policy, decades = saved.intensity_decades === undefined ? 8 : saved.intensity_decades;
+  if (!["linear", "log10", "log10_normalized"].includes(scale) || !["reject", "clip", "shift"].includes(policy) || typeof decades !== "number" || !Number.isFinite(decades) || decades < 1 || decades > 20) throw new Error("저장된 세기 축 설정이 올바르지 않습니다.");
+  $("intensity_scale").value = scale; $("negative_policy").value = policy; $("intensity_decades").value = String(decades);
+  refreshIntensityControls();
+}
+function refreshIntensityControls() {
+  const scale = $("intensity_scale").value;
+  $("intensityDecadesField").hidden = scale !== "log10_normalized";
+  $("intensityDecadesNote").hidden = scale !== "log10_normalized";
+  $("negativePolicyField").hidden = scale !== "linear";
+  $("applyIntensity").disabled = !state.measurementSource || state.fitBusy;
+  $("runFit").disabled = !state.measurement || state.fitBusy;
+  $("fitPeaks").disabled = !state.measurement || state.fitBusy;
+  $("estimateFringes").disabled = !state.measurement || state.fitBusy;
+  let lo=Infinity, hi=-Infinity, negatives=0;
+  for (const y of state.measurementSource?.intensities || []) { lo=Math.min(lo,y); hi=Math.max(hi,y); if(y<0) negatives++; }
+  $("intensityHint").hidden = !(negatives && Math.abs(hi-1)<=1e-6 && hi-lo<100);
+  const m=state.measurement?.intensity_transform;
+  let summary = state.intensityPending ? "세기 축 적용 대기 · 측정 분석을 실행할 수 없습니다." : "적용된 세기 변환 없음";
+  if (m) {
+    const label = {linear:"선형", log10:"log₁₀ → 선형", log10_normalized:"정규화 log₁₀ → 선형"}[m.intensity_scale];
+    summary = `적용: ${label} · 데카드 수 ${m.intensity_scale === "log10_normalized" ? m.intensity_decades : "—"} · 음수 처리 ${m.intensity_scale === "linear" ? m.negative_policy : "—"} · 더한 상수 ${m.shift} · 원본 음수 ${m.negative_count}개`;
+  }
+  for (const node of document.querySelectorAll(".intensity-provenance")) node.textContent=summary;
+}
+function clearAppliedIntensity() {
+  ++state.intensityRequest;
+  state.measurement = null; state.stats = null;
+  state.intensityPending = Boolean(state.measurementSource);
+  hideFitResult({clearResidual:true}); invalidateFringes(); invalidatePeaks();
+  refreshIntensityControls(); updateMetrics(); requestDraw();
+}
+function intensitySettingsChanged() {
+  ++state.importRequest;
+  clearAppliedIntensity();
+  $("intensityStatus").textContent = "설정이 바뀌었습니다. 세기 축 적용을 눌러 원본에서 다시 변환하세요.";
+  $("intensityStatus").classList.remove("error");
+}
+async function applyIntensity({adjustScan=state.intensityAdjustScan, clearInputs=false} = {}) {
+  if (!state.measurementSource || state.fitBusy) return false;
+  clearAppliedIntensity();
+  const id=state.intensityRequest;
+  try {
+    const settings=readIntensitySettings();
+    const converted=await getJson("/api/intensity", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({measurement:state.measurementSource, settings})});
+    if(id!==state.intensityRequest) return false;
+    setMeasurement(converted, {adjustScan, clearInputs});
+    state.intensityAdjustScan=false;
+    $("intensityStatus").textContent = "원본에서 한 번 변환했습니다. 모든 분석은 이 선형 강도를 사용합니다.";
+    $("intensityStatus").classList.remove("error");
+    setStatus("선택한 세기 축을 적용했습니다.");
+    return true;
+  } catch(error) {
+    if(id!==state.intensityRequest) return false;
+    const hasNegative=state.measurementSource.intensities.some(y=>y<0);
+    $("intensityStatus").textContent = hasNegative && $("intensity_scale").value==="linear" && $("negative_policy").value==="reject"
+      ? "파일을 읽었습니다. 음수가 있어 분석은 대기합니다. 저장 축을 확인해 log 모드를 선택하거나, 선형이면 clip 또는 shift를 직접 선택하세요."
+      : "변환하지 못했습니다. 축·데카드 수를 확인하세요. 유효 범위를 벗어나는 지수 값이나 양의 강도가 없는 데이터는 분석할 수 없습니다.";
+    $("intensityStatus").classList.add("error");
+    setStatus($("intensityStatus").textContent,true);
+    return false;
+  }
+}
+async function ingestMeasurement(raw, {adjustScan=true, settings=null, clearInputs=true} = {}) {
+  const source=validateCurve(raw, "측정 데이터", {allowSigned:true});
+  clearAppliedIntensity();
+  state.measurementSource=source;
+  state.intensityAdjustScan=adjustScan;
+  state.intensityPending=true;
+  if(settings) applyIntensitySettings(settings);
+  $("dataName").textContent=source.filename;
+  $("dataMeta").textContent=`${source.angles.length.toLocaleString("ko-KR")}점 · ${formatAngle(source.angles[0],2)}–${formatAngle(source.angles.at(-1),2)}° · 원본 열 보존`;
+  if(clearInputs) {invalidateFringes({clearInputs:true});invalidatePeaks({clearInputs:true});}
+  refreshIntensityControls();
+  return applyIntensity({adjustScan,clearInputs});
 }
 
 function trimNumber(value, digits = 5) {
@@ -919,26 +1019,34 @@ async function getJson(url, options) {
 }
 
 async function openSample() {
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     setStatus("SRO/STO 예시 데이터를 불러오는 중입니다.");
     const raw = await getJson("/api/sample");
-    setMeasurement(raw);
-    if (await runSimulation()) setStatus(`${state.measurement.filename}을(를) 열었습니다. 반사면·파장 가정을 확인한 뒤 자동 피팅을 실행하세요.`);
+    if(importId!==state.importRequest) return;
+    if (!await ingestMeasurement(raw, {settings:{intensity_scale:"linear",intensity_decades:8,negative_policy:"reject"}}) || importId!==state.importRequest) return;
+    if (await runSimulation() && importId===state.importRequest && state.measurement) setStatus(`${state.measurement.filename}을(를) 열었습니다. 반사면·파장 가정을 확인한 뒤 자동 피팅을 실행하세요.`);
   } catch (error) {
+    if(importId!==state.importRequest) return;
     if (!state.simulation) await runSimulation();
+    if(importId!==state.importRequest) return;
     setStatus(`예시 데이터 오류: ${error.message}`, true);
   }
 }
 
 async function openMeasurementFile(file) {
   if (!file) return;
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     setStatus(`${file.name}을(를) 읽는 중입니다.`);
     const body = await file.arrayBuffer();
     const raw = await getJson("/api/parse", {method:"POST",headers:{"Content-Type":"application/octet-stream","X-Filename":encodeURIComponent(file.name)},body});
-    setMeasurement({...raw, filename:file.name});
-    if (await runSimulation()) setStatus(`${file.name} · 원본 ${state.measurement.angles.length.toLocaleString("ko-KR")}점을 불러왔습니다.`);
-  } catch (error) { setStatus(`측정 파일 오류: ${error.message}`, true); }
+    if(importId!==state.importRequest) return;
+    if (!await ingestMeasurement({...raw, filename:file.name}) || importId!==state.importRequest) return;
+    if (await runSimulation() && importId===state.importRequest && state.measurement) setStatus(`${file.name} · 원본 ${state.measurement.angles.length.toLocaleString("ko-KR")}점을 불러왔습니다.`);
+  } catch (error) { if(importId!==state.importRequest) return; setStatus(`측정 파일 오류: ${error.message}`, true); }
 }
 
 function validateSimulation(raw) {
@@ -1153,6 +1261,7 @@ function renderResidualDiagnostics(result = null, fit = null) {
 
 function showFitResult(result, fit) {
   state.fitResult = {
+    intensity_transform:state.measurement?.intensity_transform,
     parameters: result.config.parameters,
     initial_log_rmse: result.initial_log_rmse,
     best_log_rmse: result.best_log_rmse,
@@ -1699,8 +1808,11 @@ async function ensureCurrentSimulation() {
 async function saveProject() {
   try {
     if (!await ensureCurrentSimulation()) return;
-    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
+    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurementSource?.filename || state.measurement?.filename || "측정 데이터 없음"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
+    project.intensity_settings = readIntensitySettings();
+    if (state.measurementSource) project.measurement_source = {two_theta_deg:state.measurementSource.angles,intensity_raw:state.measurementSource.intensities};
+    if (state.measurement) project.intensity_transform = state.measurement.intensity_transform;
     project.fit_settings = captureFitSettings();
     project.fringe_settings = captureFringeInputs();
     project.peak_settings = capturePeakInputs();
@@ -1712,23 +1824,33 @@ async function saveProject() {
 
 async function loadProject(file) {
   if (!file) return;
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     const project = JSON.parse(await file.text());
+    if(importId!==state.importRequest) return;
     if (project.format !== "xrd-studio-project-v1") throw new Error("XRD Studio 설정 파일이 아닙니다.");
     const config = validateConfig({parameters:project.parameters, scan:project.scan});
     let measurement = null;
-    if (project.measurement) measurement = validateCurve({...project.measurement, filename:project.measurement_name || "저장된 측정 데이터"});
+    const source = project.measurement_source || project.measurement;
+    if (project.intensity_settings && !project.measurement_source && project.intensity_settings.intensity_scale && project.intensity_settings.intensity_scale !== "linear") throw new Error("로그 축 설정에는 변환 전 원본 열이 필요합니다.");
+    if(source) measurement=validateCurve({...source,filename:project.measurement_name || "저장된 측정 데이터"}, "측정 데이터", {allowSigned:true});
+    applyIntensitySettings(project.intensity_settings === undefined ? {} : project.intensity_settings);
     applyConfig(config);
-    if (measurement) setMeasurement(measurement, {adjustScan:false});
-    else {state.measurement = null; invalidateFringes({clearInputs:true}); $("dataName").textContent = "측정 데이터 없음"; $("dataMeta").textContent = "2θ(°), 강도 · 2열 파일";}
+    if(measurement) { await ingestMeasurement(measurement, {adjustScan:false}); measurement=state.measurement; }
+    else { state.measurementSource=null; clearAppliedIntensity(); invalidateFringes({clearInputs:true}); invalidatePeaks({clearInputs:true}); $("dataName").textContent="측정 데이터 없음"; $("dataMeta").textContent="2θ(°), 강도 · 2열 파일"; }
+    if(importId!==state.importRequest) return;
+    const savedLinear = project.measurement;
+    const sameSavedMeasurement = !project.measurement_source || savedLinear && JSON.stringify(savedLinear.two_theta_deg)===JSON.stringify(measurement?.angles) && JSON.stringify(savedLinear.intensity_raw)===JSON.stringify(measurement?.intensities);
     applyFringeInputs(project.fringe_settings);
     applyPeakInputs(project.peak_settings);
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
-      if (measurement && project.fit_result && project.model_revision !== modelRevision) {
+      if(importId!==state.importRequest) return;
+      if (measurement && project.fit_result && (project.model_revision !== modelRevision || !sameSavedMeasurement)) {
         setFitProgress("저장된 피팅의 계산 기준이 현재와 다릅니다. 다시 피팅하세요.");
       }
-      if (measurement && project.fit_result && project.model_revision === modelRevision) {
+      if (measurement && project.fit_result && project.model_revision === modelRevision && sameSavedMeasurement) {
         try {
           const saved = project.fit_result;
           const result = validateFitResponse(saved, config.scan);
@@ -1749,9 +1871,10 @@ async function loadProject(file) {
           }
         } catch { /* Old or malformed optional fit result does not block project loading. */ }
       }
-      setStatus(`${file.name}에서 설정과 측정 데이터를 열었습니다.${migratedThicknessBounds ? " 이전 N 피팅 경계를 nm로 환산했습니다." : ""}`);
+      if(state.intensityPending) setStatus($("intensityStatus").textContent,true);
+      else setStatus(`${file.name}에서 설정과 측정 데이터를 열었습니다.${migratedThicknessBounds ? " 이전 N 피팅 경계를 nm로 환산했습니다." : ""}`);
     }
-  } catch (error) { setStatus(`설정 열기 오류: ${error.message}`, true); }
+  } catch (error) { if(importId!==state.importRequest) return; setStatus(`설정 열기 오류: ${error.message}`, true); }
 }
 
 async function exportCsv() {
@@ -1759,17 +1882,21 @@ async function exportCsv() {
     if (!await ensureCurrentSimulation()) return;
     const sim = state.simulation, meas = state.measurement;
     const measuredMaximum = meas ? visibleMaximum(meas.angles, meas.intensities, sim.angles[0], sim.angles.at(-1)).maximum || 1 : 1;
-    const rows = ["two_theta_deg,simulation_relative,measurement_raw,measurement_relative"];
+    const meta=meas?.intensity_transform;
+    const rows = ["two_theta_deg,simulation_relative,measurement_raw,measurement_relative,measurement_linear,intensity_scale,intensity_decades,negative_policy,intensity_shift,source_negative_count"];
     for (let i = 0; i < sim.angles.length; i++) {
       const x = sim.angles[i], raw = meas ? interpolate(meas.angles, meas.intensities, x) : null;
-      rows.push(`${x.toFixed(8)},${sim.intensities[i].toPrecision(10)},${raw === null ? "" : raw.toPrecision(10)},${raw === null ? "" : (raw / measuredMaximum).toPrecision(10)}`);
+      const sourceRaw=state.measurementSource ? interpolate(state.measurementSource.angles,state.measurementSource.intensities,x) : raw;
+      rows.push(`${x.toFixed(8)},${sim.intensities[i].toPrecision(10)},${sourceRaw === null ? "" : sourceRaw.toPrecision(10)},${raw === null ? "" : (raw / measuredMaximum).toPrecision(10)},${raw === null ? "" : raw.toPrecision(10)},${meta?.intensity_scale || ""},${meta?.intensity_decades ?? ""},${meta?.negative_policy || ""},${meta?.shift ?? ""},${meta?.negative_count ?? ""}`);
     }
     downloadText("xrd_simulation.csv", "\uFEFF" + rows.join("\r\n") + "\r\n", "text/csv;charset=utf-8");
-    setStatus("계산 곡선과 측정 원본/상대 강도를 CSV로 내보냈습니다.");
+    setStatus("계산 곡선, 측정 원본 열·선형 강도와 적용한 축 정보를 CSV로 내보냈습니다.");
   } catch (error) { setStatus(`CSV 내보내기 오류: ${error.message}`, true); }
 }
 
 function bindEvents() {
+  $("applyIntensity").addEventListener("click", async () => { ++state.importRequest; if(await applyIntensity()) await runSimulation(); });
+  for (const id of ["intensity_scale", "intensity_decades", "negative_policy"]) $(id).addEventListener("input", intensitySettingsChanged);
   $("settingsForm").addEventListener("submit", (event) => {event.preventDefault(); runSimulation();});
   for (const eventName of ["input", "change"]) $("settingsForm").addEventListener(eventName, (event) => {
     if (!event.target.matches("input, select")) return;

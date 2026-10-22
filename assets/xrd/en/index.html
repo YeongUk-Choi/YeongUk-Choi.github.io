@@ -12,6 +12,7 @@
   <script src="../xrd_fit.js" defer></script>
   <script src="../xrd_fringes.js" defer></script>
   <script src="../xrd_peaks.js" defer></script>
+  <script src="../xrd_intensity.js" defer></script>
   <script src="../xrd_local.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -49,7 +50,16 @@
         <h2 id="data-title">Measurement</h2>
         <div class="file-name" id="dataName">Loading the example…</div>
         <div class="file-meta" id="dataMeta">2θ (°), intensity · two-column file</div>
-        <p class="small-note">.dat / .csv / .txt · raw intensities are kept when you save or export.</p>
+        <p class="small-note">.dat / .csv / .txt · Original values are preserved in project files. Analyses use converted linear intensities.</p>
+        <label class="field">Intensity axis in the file<select id="intensity_scale"><option value="linear">Linear (default)</option><option value="log10">log₁₀(I)</option><option value="log10_normalized">Normalized log₁₀(I)</option></select></label>
+        <label class="field" id="intensityDecadesField" hidden>Log range (decades)<input id="intensity_decades" type="number" min="1" max="20" step="any" value="8"></label>
+        <p class="small-note" id="intensityDecadesNote" hidden>8 is a starting value, not an estimate. Enter the decade count used for export. Absolute intensities lost during normalization cannot be restored.</p>
+        <label class="field" id="negativePolicyField">Negative values in linear data<select id="negative_policy"><option value="reject">Require a choice if negatives exist</option><option value="clip">Set negatives to zero (clip)</option><option value="shift">Shift the minimum to zero (shift)</option></select></label>
+        <p class="small-note">Background-subtracted linear data can contain negatives. Confirm the stored axis before processing. This setting is separate from the plot log-display button.</p>
+        <p class="small-note" id="intensityHint" hidden>This may be a normalized log axis. No automatic conversion is applied. Confirm the stored axis and decade count.</p>
+        <button class="button outline" id="applyIntensity" type="button">Apply intensity axis</button>
+        <p class="small-note" id="intensityStatus" role="status" aria-live="polite">Linear intensity is the default.</p>
+        <p class="small-note intensity-provenance" id="intensitySummary">No applied intensity conversion</p>
       </section>
 
       <form id="settingsForm" novalidate>
@@ -233,14 +243,16 @@
         <div class="scan-badge" id="scanBadge">preparing the calculation</div>
       </div>
 
+      <p class="small-note intensity-provenance">No applied intensity conversion</p>
       <div class="metrics" aria-label="Key results">
-        <div class="metric-card observed"><div class="metric-label">Measured main peak <span>visible range</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">position of the highest raw intensity</div></div>
+        <div class="metric-card observed"><div class="metric-label">Measured main peak <span>visible range</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">Maximum linear-intensity position</div></div>
         <div class="metric-card substrate"><div class="metric-label">Expected substrate peak</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">Bragg position from the structure you entered</div></div>
         <div class="metric-card film"><div class="metric-label">Expected film peak</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">Bragg position from mean lattice</div></div>
         <div class="metric-card error"><div class="metric-label">Displayed log RMSE <span>visible range</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">over the current chart range</div></div>
       </div>
 
       <section class="fit-result" id="fitResult" aria-labelledby="fit-result-title" hidden>
+        <p class="small-note intensity-provenance">No applied intensity conversion</p>
         <div class="fit-result-top"><div><div class="eyebrow blue">BEST FIT</div><h3 id="fit-result-title">Fit result</h3></div><span id="fitResultRange">—</span></div>
         <p class="fit-stale" id="fitStale" hidden>The settings have changed. The values below are from the previous fit — run the fit again with the new settings.</p>
         <div class="fit-result-grid">
@@ -297,6 +309,7 @@
       </section>
 
       <section class="residual-card" id="residualCard" aria-labelledby="residual-title" hidden>
+        <p class="small-note intensity-provenance">No applied intensity conversion</p>
         <div class="residual-heading"><div><div class="eyebrow blue">FIT DIAGNOSTIC</div><h3 id="residual-title">Residuals over the fit range</h3></div><strong id="residualOverall">—</strong></div>
         <p class="residual-explanation">Residual = log₁₀(calculated relative intensity) − log₁₀(measured relative intensity). Zero is agreement; +1 means the calculation is ten times higher. Each curve is normalised to its maximum within the fit range.</p>
         <div class="residual-plot-wrap" id="residualPlotWrap"><canvas id="residualCanvas" role="img" aria-label="Calculated minus measured log intensity against angle over the fit range"></canvas></div>
@@ -305,6 +318,7 @@
       </section>
 
       <section class="fringe-card" id="fringeCard" aria-labelledby="fringe-title">
+        <p class="small-note intensity-provenance">No applied intensity conversion</p>
         <div class="residual-heading"><div><div class="eyebrow blue">MEASURED FRINGES</div><h3 id="fringe-title">Compare thickness from fringe spacing</h3></div><button class="button outline" id="fringeUseVisible" type="button">Use the visible range</button></div>
         <p class="residual-explanation">Select a measured region with repeating fringes away from the main substrate peak. Uses q = 4π sinθ/λ and thickness = 2π/Δq. Estimated thickness scales with the entered wavelength. This does not change the fitting objective.</p>
         <div class="field-grid two fringe-roi">
@@ -323,6 +337,7 @@
       </section>
 
       <section class="fringe-card peak-card" id="peakCard" aria-labelledby="peak-title">
+        <p class="small-note intensity-provenance">No applied intensity conversion</p>
         <div class="residual-heading"><div><div class="eyebrow blue">DESCRIPTIVE PEAKS</div><h3 id="peak-title">Peak-shape decomposition</h3></div><button class="button outline" id="peakUseVisible" type="button">Use the visible range</button></div>
         <p class="residual-explanation">Describe the selected range with one or two pseudo-Voigt components and a linear background. A pseudo-Voigt mixes Gaussian and Lorentzian peak shapes. This is not a physical multilayer model and does not change the film simulation above.</p>
         <div class="field-grid three peak-inputs">

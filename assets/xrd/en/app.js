@@ -51,6 +51,11 @@ function filmMetadata(material) {
 }
 const state = {
   measurement: null,
+  measurementSource: null,
+  intensityRequest: 0,
+  importRequest: 0,
+  intensityPending: false,
+  intensityAdjustScan: false,
   simulation: null,
   config: null,
   configSignature: "",
@@ -92,11 +97,11 @@ function setFitProgress(message, kind = "") {
 function setFitBusy(busy) {
   state.fitBusy = busy;
   $("runFit").classList.toggle("is-busy", busy);
-  for (const node of document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button, .head-actions button")) node.disabled = busy;
+  for (const node of document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button, .head-actions button, .data-card input, .data-card select, .data-card button")) node.disabled = busy;
   // the one control that has to stay alive while everything else is locked
   const cancel = $("cancelFit");
   if (cancel) { cancel.hidden = !busy; cancel.disabled = false; }
-  if (!busy) refreshFitControls();
+  if (!busy) { refreshFitControls(); refreshIntensityControls(); }
 }
 
 /* A fit runs for about a minute in one blocking request, so the page asks the
@@ -855,28 +860,32 @@ function projectFitStart(config, fit) {
   return {parameters, adjusted};
 }
 
-function validateCurve(raw, filename = "Measurement") {
+function validateCurve(raw, filename = "Measurement", {allowSigned = false} = {}) {
   if (!raw || typeof raw !== "object") throw new Error("The curve data could not be read.");
-  const angles = raw.angles || raw.two_theta_deg;
-  const intensities = raw.intensities || raw.intensity_raw;
+  const angleInput = raw.angles || raw.two_theta_deg;
+  const intensityInput = raw.intensities || raw.intensity_raw;
+  const angles = Array.isArray(angleInput) ? angleInput.slice() : angleInput;
+  const intensities = Array.isArray(intensityInput) ? intensityInput.slice() : intensityInput;
   if (!Array.isArray(angles) || !Array.isArray(intensities) || angles.length < 2 || angles.length !== intensities.length) throw new Error("Angles and intensities must be two arrays of the same length, with at least two points.");
   if (angles.length > 1000000) throw new Error("That file is too large. Up to 1,000,000 points can be read.");
   let previous = -Infinity, positive = false;
   for (let i = 0; i < angles.length; i++) {
-    const x = Number(angles[i]), y = Number(intensities[i]);
-    if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || x >= 180 || x <= previous || y < 0) throw new Error("A measurement needs increasing angles within 0–180° and finite, nonnegative intensities.");
+    const x = angles[i], y = intensities[i];
+    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || x >= 180 || x <= previous || (!allowSigned && y < 0)) throw new Error("Measured angles must be finite and increasing, and intensities finite. Analysis intensities must be nonnegative.");
     angles[i] = x; intensities[i] = y; previous = x;
     if (y > 0) positive = true;
   }
-  if (!positive) throw new Error("The measurement has no positive intensity.");
+  if (!allowSigned && !positive) throw new Error("The measurement has no positive intensity.");
   return {angles, intensities, filename: String(raw.filename || filename)};
 }
 
-function setMeasurement(raw, {adjustScan = true} = {}) {
+function setMeasurement(raw, {adjustScan = true, clearInputs = true} = {}) {
   const measurement = validateCurve(raw);
+  measurement.intensity_transform = raw.intensity_transform;
   state.measurement = measurement;
-  invalidatePeaks({clearInputs:true});
-  invalidateFringes({clearInputs:true});
+  state.intensityPending = false;
+  invalidatePeaks({clearInputs});
+  invalidateFringes({clearInputs});
   hideFitResult({clearResidual:true});
   setFitProgress(`Waiting to fit · up to ${Number($("fit_evaluations").value).toLocaleString("en")} model evaluations`);
   const {angles, intensities, filename} = measurement;
@@ -897,7 +906,98 @@ function setMeasurement(raw, {adjustScan = true} = {}) {
       $("fit_max").value = String(xmax);
     }
   }
+  state.stats = null;
+  refreshIntensityControls();
+  updateMetrics();
+  renderResidualDiagnostics();
   requestDraw();
+}
+
+/* Raw imported values are retained separately. Only this ingestion boundary
+   converts axes; every analysis continues to consume nonnegative linear values. */
+function readIntensitySettings() {
+  const intensity_scale = $("intensity_scale").value;
+  const intensity_decades = Number($("intensity_decades").value);
+  if (!$("intensity_decades").value.trim() || !Number.isFinite(intensity_decades) || intensity_decades < 1 || intensity_decades > 20) throw new Error("The decade count must be a finite value from 1 to 20.");
+  return {intensity_scale, intensity_decades, negative_policy:$("negative_policy").value};
+}
+function applyIntensitySettings(saved = {}) {
+  if (!saved || typeof saved !== "object" || Array.isArray(saved)) throw new Error("Saved intensity-axis settings are invalid.");
+  const scale = saved.intensity_scale === undefined ? "linear" : saved.intensity_scale, policy = saved.negative_policy === undefined ? "reject" : saved.negative_policy, decades = saved.intensity_decades === undefined ? 8 : saved.intensity_decades;
+  if (!["linear", "log10", "log10_normalized"].includes(scale) || !["reject", "clip", "shift"].includes(policy) || typeof decades !== "number" || !Number.isFinite(decades) || decades < 1 || decades > 20) throw new Error("Saved intensity-axis settings are invalid.");
+  $("intensity_scale").value = scale; $("negative_policy").value = policy; $("intensity_decades").value = String(decades);
+  refreshIntensityControls();
+}
+function refreshIntensityControls() {
+  const scale = $("intensity_scale").value;
+  $("intensityDecadesField").hidden = scale !== "log10_normalized";
+  $("intensityDecadesNote").hidden = scale !== "log10_normalized";
+  $("negativePolicyField").hidden = scale !== "linear";
+  $("applyIntensity").disabled = !state.measurementSource || state.fitBusy;
+  $("runFit").disabled = !state.measurement || state.fitBusy;
+  $("fitPeaks").disabled = !state.measurement || state.fitBusy;
+  $("estimateFringes").disabled = !state.measurement || state.fitBusy;
+  let lo=Infinity, hi=-Infinity, negatives=0;
+  for (const y of state.measurementSource?.intensities || []) { lo=Math.min(lo,y); hi=Math.max(hi,y); if(y<0) negatives++; }
+  $("intensityHint").hidden = !(negatives && Math.abs(hi-1)<=1e-6 && hi-lo<100);
+  const m=state.measurement?.intensity_transform;
+  let summary = state.intensityPending ? "Intensity conversion pending · measured-data analyses are unavailable." : "No applied intensity conversion";
+  if (m) {
+    const label = {linear:"linear", log10:"log₁₀ → linear", log10_normalized:"Normalized log₁₀ → linear"}[m.intensity_scale];
+    summary = `Applied: ${label} · decades ${m.intensity_scale === "log10_normalized" ? m.intensity_decades : "—"} · negative policy ${m.intensity_scale === "linear" ? m.negative_policy : "—"} · added constant ${m.shift} · ${m.negative_count} negative source values`;
+  }
+  for (const node of document.querySelectorAll(".intensity-provenance")) node.textContent=summary;
+}
+function clearAppliedIntensity() {
+  ++state.intensityRequest;
+  state.measurement = null; state.stats = null;
+  state.intensityPending = Boolean(state.measurementSource);
+  hideFitResult({clearResidual:true}); invalidateFringes(); invalidatePeaks();
+  refreshIntensityControls(); updateMetrics(); requestDraw();
+}
+function intensitySettingsChanged() {
+  ++state.importRequest;
+  clearAppliedIntensity();
+  $("intensityStatus").textContent = "Settings changed. Press Apply intensity axis to convert again from the original values.";
+  $("intensityStatus").classList.remove("error");
+}
+async function applyIntensity({adjustScan=state.intensityAdjustScan, clearInputs=false} = {}) {
+  if (!state.measurementSource || state.fitBusy) return false;
+  clearAppliedIntensity();
+  const id=state.intensityRequest;
+  try {
+    const settings=readIntensitySettings();
+    const converted=await getJson("/api/intensity", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({measurement:state.measurementSource, settings})});
+    if(id!==state.intensityRequest) return false;
+    setMeasurement(converted, {adjustScan, clearInputs});
+    state.intensityAdjustScan=false;
+    $("intensityStatus").textContent = "Converted once from the original values. All analyses use these linear intensities.";
+    $("intensityStatus").classList.remove("error");
+    setStatus("Applied the selected intensity axis.");
+    return true;
+  } catch(error) {
+    if(id!==state.intensityRequest) return false;
+    const hasNegative=state.measurementSource.intensities.some(y=>y<0);
+    $("intensityStatus").textContent = hasNegative && $("intensity_scale").value==="linear" && $("negative_policy").value==="reject"
+      ? "File read. Analysis is pending because values are negative. Check the stored axis and select a log mode, or explicitly choose clip or shift for linear data."
+      : "Conversion failed. Check the axis and decade count. Exponents outside the supported range, or data without positive intensities, cannot be analyzed.";
+    $("intensityStatus").classList.add("error");
+    setStatus($("intensityStatus").textContent,true);
+    return false;
+  }
+}
+async function ingestMeasurement(raw, {adjustScan=true, settings=null, clearInputs=true} = {}) {
+  const source=validateCurve(raw, "Measurement", {allowSigned:true});
+  clearAppliedIntensity();
+  state.measurementSource=source;
+  state.intensityAdjustScan=adjustScan;
+  state.intensityPending=true;
+  if(settings) applyIntensitySettings(settings);
+  $("dataName").textContent=source.filename;
+  $("dataMeta").textContent=`${source.angles.length.toLocaleString("en")} points · ${formatAngle(source.angles[0],2)}–${formatAngle(source.angles.at(-1),2)}° · original values retained`;
+  if(clearInputs) {invalidateFringes({clearInputs:true});invalidatePeaks({clearInputs:true});}
+  refreshIntensityControls();
+  return applyIntensity({adjustScan,clearInputs});
 }
 
 function trimNumber(value, digits = 5) {
@@ -919,26 +1019,34 @@ async function getJson(url, options) {
 }
 
 async function openSample() {
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     setStatus("Loading the bundled SRO/STO example…");
     const raw = await getJson("/api/sample");
-    setMeasurement(raw);
-    if (await runSimulation()) setStatus(`Opened ${state.measurement.filename}. Check the reflection and wavelength you are assuming, then run the fit.`);
+    if(importId!==state.importRequest) return;
+    if (!await ingestMeasurement(raw, {settings:{intensity_scale:"linear",intensity_decades:8,negative_policy:"reject"}}) || importId!==state.importRequest) return;
+    if (await runSimulation() && importId===state.importRequest && state.measurement) setStatus(`Opened ${state.measurement.filename}. Check the reflection and wavelength you are assuming, then run the fit.`);
   } catch (error) {
+    if(importId!==state.importRequest) return;
     if (!state.simulation) await runSimulation();
+    if(importId!==state.importRequest) return;
     setStatus(`Example data error: ${error.message}`, true);
   }
 }
 
 async function openMeasurementFile(file) {
   if (!file) return;
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     setStatus(`Reading ${file.name}…`);
     const body = await file.arrayBuffer();
     const raw = await getJson("/api/parse", {method:"POST",headers:{"Content-Type":"application/octet-stream","X-Filename":encodeURIComponent(file.name)},body});
-    setMeasurement({...raw, filename:file.name});
-    if (await runSimulation()) setStatus(`${file.name} · ${state.measurement.angles.length.toLocaleString("en")} points loaded.`);
-  } catch (error) { setStatus(`Measurement file error: ${error.message}`, true); }
+    if(importId!==state.importRequest) return;
+    if (!await ingestMeasurement({...raw, filename:file.name}) || importId!==state.importRequest) return;
+    if (await runSimulation() && importId===state.importRequest && state.measurement) setStatus(`${file.name} · ${state.measurement.angles.length.toLocaleString("en")} points loaded.`);
+  } catch (error) { if(importId!==state.importRequest) return; setStatus(`Measurement file error: ${error.message}`, true); }
 }
 
 function validateSimulation(raw) {
@@ -1153,6 +1261,7 @@ function renderResidualDiagnostics(result = null, fit = null) {
 
 function showFitResult(result, fit) {
   state.fitResult = {
+    intensity_transform:state.measurement?.intensity_transform,
     parameters: result.config.parameters,
     initial_log_rmse: result.initial_log_rmse,
     best_log_rmse: result.best_log_rmse,
@@ -1699,8 +1808,11 @@ async function ensureCurrentSimulation() {
 async function saveProject() {
   try {
     if (!await ensureCurrentSimulation()) return;
-    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "no measurement"};
+    const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurementSource?.filename || state.measurement?.filename || "no measurement"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
+    project.intensity_settings = readIntensitySettings();
+    if (state.measurementSource) project.measurement_source = {two_theta_deg:state.measurementSource.angles,intensity_raw:state.measurementSource.intensities};
+    if (state.measurement) project.intensity_transform = state.measurement.intensity_transform;
     project.fit_settings = captureFitSettings();
     project.fringe_settings = captureFringeInputs();
     project.peak_settings = capturePeakInputs();
@@ -1712,23 +1824,33 @@ async function saveProject() {
 
 async function loadProject(file) {
   if (!file) return;
+  const importId=++state.importRequest;
+  ++state.intensityRequest;
   try {
     const project = JSON.parse(await file.text());
+    if(importId!==state.importRequest) return;
     if (project.format !== "xrd-studio-project-v1") throw new Error("That is not an XRD Studio settings file.");
     const config = validateConfig({parameters:project.parameters, scan:project.scan});
     let measurement = null;
-    if (project.measurement) measurement = validateCurve({...project.measurement, filename:project.measurement_name || "saved measurement"});
+    const source = project.measurement_source || project.measurement;
+    if (project.intensity_settings && !project.measurement_source && project.intensity_settings.intensity_scale && project.intensity_settings.intensity_scale !== "linear") throw new Error("Log-axis settings require the original values before conversion.");
+    if(source) measurement=validateCurve({...source,filename:project.measurement_name || "saved measurement"}, "Measurement", {allowSigned:true});
+    applyIntensitySettings(project.intensity_settings === undefined ? {} : project.intensity_settings);
     applyConfig(config);
-    if (measurement) setMeasurement(measurement, {adjustScan:false});
-    else {state.measurement = null; invalidateFringes({clearInputs:true}); $("dataName").textContent = "no measurement"; $("dataMeta").textContent = "2θ (°), intensity · two-column file";}
+    if(measurement) { await ingestMeasurement(measurement, {adjustScan:false}); measurement=state.measurement; }
+    else { state.measurementSource=null; clearAppliedIntensity(); invalidateFringes({clearInputs:true}); invalidatePeaks({clearInputs:true}); $("dataName").textContent="no measurement"; $("dataMeta").textContent="2θ (°), intensity · two-column file"; }
+    if(importId!==state.importRequest) return;
+    const savedLinear = project.measurement;
+    const sameSavedMeasurement = !project.measurement_source || savedLinear && JSON.stringify(savedLinear.two_theta_deg)===JSON.stringify(measurement?.angles) && JSON.stringify(savedLinear.intensity_raw)===JSON.stringify(measurement?.intensities);
     applyFringeInputs(project.fringe_settings);
     applyPeakInputs(project.peak_settings);
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
-      if (measurement && project.fit_result && project.model_revision !== modelRevision) {
+      if(importId!==state.importRequest) return;
+      if (measurement && project.fit_result && (project.model_revision !== modelRevision || !sameSavedMeasurement)) {
         setFitProgress("The saved fit used a different calculation. Run the fit again.");
       }
-      if (measurement && project.fit_result && project.model_revision === modelRevision) {
+      if (measurement && project.fit_result && project.model_revision === modelRevision && sameSavedMeasurement) {
         try {
           const saved = project.fit_result;
           const result = validateFitResponse(saved, config.scan);
@@ -1749,9 +1871,10 @@ async function loadProject(file) {
           }
         } catch { /* Old or malformed optional fit result does not block project loading. */ }
       }
-      setStatus(`Opened the settings and measurement from ${file.name}.${migratedThicknessBounds ? " Older N bounds were converted to nm." : ""}`);
+      if(state.intensityPending) setStatus($("intensityStatus").textContent,true);
+      else setStatus(`Opened the settings and measurement from ${file.name}.${migratedThicknessBounds ? " Older N bounds were converted to nm." : ""}`);
     }
-  } catch (error) { setStatus(`Open error: ${error.message}`, true); }
+  } catch (error) { if(importId!==state.importRequest) return; setStatus(`Open error: ${error.message}`, true); }
 }
 
 async function exportCsv() {
@@ -1759,17 +1882,21 @@ async function exportCsv() {
     if (!await ensureCurrentSimulation()) return;
     const sim = state.simulation, meas = state.measurement;
     const measuredMaximum = meas ? visibleMaximum(meas.angles, meas.intensities, sim.angles[0], sim.angles.at(-1)).maximum || 1 : 1;
-    const rows = ["two_theta_deg,simulation_relative,measurement_raw,measurement_relative"];
+    const meta=meas?.intensity_transform;
+    const rows = ["two_theta_deg,simulation_relative,measurement_raw,measurement_relative,measurement_linear,intensity_scale,intensity_decades,negative_policy,intensity_shift,source_negative_count"];
     for (let i = 0; i < sim.angles.length; i++) {
       const x = sim.angles[i], raw = meas ? interpolate(meas.angles, meas.intensities, x) : null;
-      rows.push(`${x.toFixed(8)},${sim.intensities[i].toPrecision(10)},${raw === null ? "" : raw.toPrecision(10)},${raw === null ? "" : (raw / measuredMaximum).toPrecision(10)}`);
+      const sourceRaw=state.measurementSource ? interpolate(state.measurementSource.angles,state.measurementSource.intensities,x) : raw;
+      rows.push(`${x.toFixed(8)},${sim.intensities[i].toPrecision(10)},${sourceRaw === null ? "" : sourceRaw.toPrecision(10)},${raw === null ? "" : (raw / measuredMaximum).toPrecision(10)},${raw === null ? "" : raw.toPrecision(10)},${meta?.intensity_scale || ""},${meta?.intensity_decades ?? ""},${meta?.negative_policy || ""},${meta?.shift ?? ""},${meta?.negative_count ?? ""}`);
     }
     downloadText("xrd_simulation.csv", "\uFEFF" + rows.join("\r\n") + "\r\n", "text/csv;charset=utf-8");
-    setStatus("Exported the calculated curve with the raw and relative measured intensities as CSV.");
+    setStatus("Exported simulation, original measured values, linear intensities and applied axis settings to CSV.");
   } catch (error) { setStatus(`CSV export error: ${error.message}`, true); }
 }
 
 function bindEvents() {
+  $("applyIntensity").addEventListener("click", async () => { ++state.importRequest; if(await applyIntensity()) await runSimulation(); });
+  for (const id of ["intensity_scale", "intensity_decades", "negative_policy"]) $(id).addEventListener("input", intensitySettingsChanged);
   $("settingsForm").addEventListener("submit", (event) => {event.preventDefault(); runSimulation();});
   for (const eventName of ["input", "change"]) $("settingsForm").addEventListener(eventName, (event) => {
     if (!event.target.matches("input, select")) return;
