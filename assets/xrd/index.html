@@ -53,7 +53,7 @@
         <p class="small-note">.dat / .csv / .txt · 원본 열은 설정 파일에 보존됩니다. 분석에는 변환한 선형 강도를 사용합니다.</p>
         <label class="field">파일의 세기 축<select id="intensity_scale"><option value="linear">선형 (기본)</option><option value="log10">log₁₀(I)</option><option value="log10_normalized">정규화된 log₁₀(I)</option></select></label>
         <label class="field" id="intensityDecadesField" hidden>로그 범위 (데카드 수)<input id="intensity_decades" type="number" min="1" max="20" step="any" value="8"></label>
-        <p class="small-note" id="intensityDecadesNote" hidden>8은 출발값이며 추정값이 아닙니다. 내보낼 때 사용한 데카드 수를 입력하세요. 정규화에서 잃은 절대 세기는 복원되지 않습니다.</p>
+        <p class="small-note" id="intensityDecadesNote" hidden>8은 출발값이며 추정값이 아닙니다. 내보낼 때 사용한 데카드 수를 입력하세요. 정규화에서 잃은 절대 세기는 복원되지 않습니다. 같은 극대 위치와 차수를 쓰면 데카드 수를 바꿔도 프린지 두께는 유지됩니다. 봉우리 폭·세기 비·물리 피팅 결과는 달라지고, 자동 극대 선택과 피크 분해 중심도 달라질 수 있습니다.</p>
         <label class="field" id="negativePolicyField">선형 데이터의 음수 처리<select id="negative_policy"><option value="reject">음수가 있으면 선택 대기</option><option value="clip">음수를 0으로 (clip)</option><option value="shift">최솟값을 0으로 이동 (shift)</option></select></label>
         <p class="small-note">배경을 뺀 선형 데이터에는 음수가 있을 수 있습니다. 파일의 저장 축을 확인한 뒤 처리하세요. 그래프의 로그 표시 버튼과는 별개입니다.</p>
         <p class="small-note" id="intensityHint" hidden>정규화된 log 축일 수 있습니다. 자동 변환하지 않습니다. 저장 축과 데카드 수를 확인하세요.</p>

@@ -939,7 +939,7 @@ function refreshIntensityControls() {
   $("estimateFringes").disabled = !state.measurement || state.fitBusy;
   let lo=Infinity, hi=-Infinity, negatives=0;
   for (const y of state.measurementSource?.intensities || []) { lo=Math.min(lo,y); hi=Math.max(hi,y); if(y<0) negatives++; }
-  $("intensityHint").hidden = !(negatives && Math.abs(hi-1)<=1e-6 && hi-lo<100);
+  $("intensityHint").hidden = !(negatives && Math.abs(hi-1)<=1e-3 && hi-lo<100);
   const m=state.measurement?.intensity_transform;
   let summary = state.intensityPending ? "Intensity conversion pending · measured-data analyses are unavailable." : "No applied intensity conversion";
   if (m) {

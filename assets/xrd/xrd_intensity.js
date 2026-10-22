@@ -35,7 +35,7 @@ const XRDIntensity = (() => {
     }
     const filename = raw.filename === undefined ? "measurement.dat" : raw.filename;
     if (typeof filename !== "string") throw new Error("Measurement filename must be a string");
-    const hint = Boolean(negativeCount && Math.abs(maximum - 1) <= 1e-6 && maximum - minimum < 100);
+    const hint = Boolean(negativeCount && Math.abs(maximum - 1) <= 1e-3 && maximum - minimum < 100);
     let shift = 0, converted;
     if (scale === "linear") {
       if (negativeCount && policy === "reject") throw new Error("Linear intensity contains negative values; explicitly choose clip or shift");

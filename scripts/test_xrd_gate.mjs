@@ -864,7 +864,7 @@ try {
       const fileText=await readFile(path.resolve(intensityFixture),"utf8");
       await uploadIntensityFile(fileText,"actual-629-signed.txt",{valid:false});state=await intensitySnapshot();
       const source=state.source.intensities;
-      assert.equal(source.filter(y=>y<0).length,68);assert.equal(state.hint,false,"Actual maximum 1.00003 is outside the hint tolerance");
+      assert.equal(source.filter(y=>y<0).length,68);assert.equal(state.hint,true,"Actual maximum 1.00003 is inside the 1e-3 hint tolerance");
       assert.deepEqual(state.disabled,[true,true,true]);assert.equal(state.settings.intensity_scale,"linear");
       await setIntensityControls({intensity_scale:"log10_normalized",intensity_decades:8});await applyIntensityControls();
       state=await intensitySnapshot();assertArrayClose(state.measurement.intensities,source.map(y=>10**(8*y)),"conditional actual 629 conversion");
