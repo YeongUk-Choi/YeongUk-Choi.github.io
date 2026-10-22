@@ -21,10 +21,11 @@ function option(name, fallback) {
   return options[i + 1];
 }
 for (let i = 0; i < options.length; i += 2) {
-  assert(["--xrd-root", "--chrome", "--output"].includes(options[i]), `Unknown argument ${options[i]}`);
+  assert(["--xrd-root", "--chrome", "--output", "--analysis-fixtures"].includes(options[i]), `Unknown argument ${options[i]}`);
   assert(options[i + 1], `Missing value for ${options[i]}`);
 }
 const xrdRoot = path.resolve(option("--xrd-root", path.join(siteRoot, "../xrd-studio-gpt")));
+const analysisFixtures = option("--analysis-fixtures", null);
 const chromePath = option("--chrome", process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
 const temp = await mkdtemp("/private/tmp/xrd-gate-test-");
 const evidence = path.resolve(option("--output", path.join(temp, "evidence")));
@@ -77,14 +78,19 @@ async function connect(url) {
 try {
   execFileSync("python3", [path.join(xrdRoot, "scripts/build_web.py"), "--output", path.join(temp, "plain")]);
   const filenames = ["index.html", "en/index.html", "app.js", "en/app.js", "styles.css",
-    "xrd_core.js", "xrd_fit.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
+    "xrd_core.js", "xrd_fit.js", "xrd_fringes.js", "xrd_peaks.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
   const files = Object.fromEntries(await Promise.all(filenames.map(async (name) =>
     [name, await readFile(path.join(temp, "plain", name), "utf8")])));
   for (const filename of filenames) {
     assert.equal(await readFile(path.join(siteRoot, "assets/xrd", filename), "utf8"), files[filename],
       `Published static asset differs from current build: ${filename}`);
   }
-  record("All twelve shipped static app files match a fresh source build");
+  await writeFile(path.join(evidence,"build-manifest.json"),JSON.stringify({
+    siteHead:execFileSync("git",["rev-parse","HEAD"],{cwd:siteRoot,encoding:"utf8"}).trim(),
+    sourceHead:execFileSync("git",["rev-parse","HEAD"],{cwd:xrdRoot,encoding:"utf8"}).trim(),
+    assets:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,{freshBuildSha256:hash(content),shippedSha256:hash(content)}]))
+  },null,2));
+  record("All fourteen shipped static app files match a fresh source build");
   const wrongCode = "intentionally-wrong-test-code";
   const correctCode = "local-fixture-code-1234";
   const fixture = {enabled: true};
@@ -374,7 +380,7 @@ try {
     }
     throw new Error(`Download did not finish: ${name}`);
   }
-  const newModelDefaults = {film_interface_width:0, film_thickness_sigma:0, background_slope:0,
+  const newModelDefaults = {film_interface_width:0, film_thickness_sigma:0, film_intensity_scale:1, background_slope:0,
     resolution_halo_fraction:0, resolution_halo_width:3};
   const newModelKeys = Object.keys(newModelDefaults);
   const expectedModes = ["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized",
@@ -402,7 +408,309 @@ try {
     mode:d.getElementById("lp_mode").value,
     enabled:Object.fromEntries(${JSON.stringify(newModelKeys)}.map(key=>[key,d.getElementById("fit_enable_"+key).checked]))
   })`));
+  async function cardScreenshot(id, name, mobile=false) {
+    if(mobile)await cdp.send("Emulation.setDeviceMetricsOverride",{width:390,height:844,deviceScaleFactor:1,mobile:true});
+    const size=await evaluate(app(`(async () => {
+      d.documentElement.style.scrollBehavior="auto";
+      d.getElementById(${JSON.stringify(id)}).scrollIntoView({block:"start",behavior:"instant"});
+      await new Promise(resolve=>f.contentWindow.requestAnimationFrame(resolve));
+      return {viewport:f.contentWindow.innerWidth,document:d.documentElement.scrollWidth,top:d.getElementById(${JSON.stringify(id)}).getBoundingClientRect().top};
+    })()`));
+    assert(size.document<=size.viewport+1,`${id} must not overflow the page horizontally`);
+    assert(size.top>=-1&&size.top<100,`${id} must be in the screenshot viewport, top=${size.top}`);
+    await screenshot(name);
+    if(mobile)await cdp.send("Emulation.setDeviceMetricsOverride",{width:1440,height:1000,deviceScaleFactor:1,mobile:false});
+    await evaluate(app(`(() => {f.contentWindow.scrollTo(0,0);return true;})()`));
+  }
+  async function rutileFlow(language, baseline) {
+    assert.equal(baseline.model_revision, "rutile-fringe-v1");
+    const labels = await evaluate(app(`(() => {
+      const material=d.getElementById("film_material"); material.value="VO2";
+      material.dispatchEvent(new Event("change",{bubbles:true}));
+      const substrate=d.getElementById("substrate_material"); substrate.value="TiO2";
+      substrate.dispatchEvent(new Event("change",{bubbles:true}));
+      return {parameters:f.contentWindow.eval("readForm")().parameters,
+        cVisible:!d.getElementById("filmCField").hidden,
+        aDisabled:d.getElementById("fit_enable_film_lattice_a").disabled,
+        aChecked:d.getElementById("fit_enable_film_lattice_a").checked,
+        cChecked:d.getElementById("fit_enable_film_lattice_c").checked,
+        text:d.getElementById("filmNote").textContent+d.getElementById("filmGradientNote").textContent,
+        quick:Array.from(d.querySelectorAll("#hklQuick button"),b=>b.textContent),
+        thickness:Number(d.getElementById("film_thickness_nm").value)};
+    })()`));
+    assert.equal(labels.parameters.film_system,"tetragonal");
+    assert.equal(labels.parameters.film_basis,"rutile");
+    assert.equal(labels.parameters.film_lattice_a,4.5546);
+    assert.equal(labels.parameters.film_lattice_c,2.8514);
+    assert.equal(labels.parameters.substrate_lattice_a,4.5937);
+    assert.equal(labels.parameters.substrate_lattice_c,2.9587);
+    assert.equal(labels.parameters.hkl,"002");
+    assert(labels.cVisible && labels.aDisabled && !labels.aChecked && labels.cChecked);
+    assert.deepEqual(labels.quick,["002","004","110","220"]);
+    assert(Math.abs(labels.thickness-labels.parameters.film_planes*2.8514/10)<1e-7);
+    assert.match(labels.text,/M1/); assert.match(labels.text,/R/);
+    assert.match(labels.text,language==="ko"?/구별할 수 없습니다/:/cannot distinguish/);
+    if(language==="en") assert(!/[가-힣]/.test(labels.text));
+    await screenshot(`rutile-controls-${language}`);
+    record(`${language}: VO2/TiO2 presets select rutile tetragonal geometry, c-only 002 fit and phase caveat`,labels);
+
+    const rules = await evaluate(app(`(() => {
+      const set=(value)=>{d.getElementById("hkl").value=value;d.getElementById("hkl").dispatchEvent(new Event("input",{bubbles:true}));};
+      set("001"); const absentText=d.getElementById("filmNote").textContent+d.getElementById("substrateNote").textContent;
+      set("111"); const allowedText=d.getElementById("filmNote").textContent+d.getElementById("substrateNote").textContent;
+      const mixed={a:d.getElementById("fit_enable_film_lattice_a").checked,c:d.getElementById("fit_enable_film_lattice_c").checked};
+      set("110"); const hk0={a:d.getElementById("fit_enable_film_lattice_a").checked,c:d.getElementById("fit_enable_film_lattice_c").checked,cDisabled:d.getElementById("fit_enable_film_lattice_c").disabled};
+      const repeat=f.contentWindow.eval("filmRepeatNm")({...f.contentWindow.eval("readForm")().parameters,hkl:"1 -1 2"});
+      set("002");
+      return {absentText,allowedText,mixed,hk0,repeat};
+    })()`));
+    const absentPattern=language==="ko"?/계통 소멸|격자 소광/:/systematically absent/;
+    assert.match(rules.absentText,absentPattern);
+    assert(!absentPattern.test(rules.allowedText),"Rutile 111 must not be rejected by a spurious hhl rule");
+    assert.deepEqual(rules.mixed,{a:true,c:false});
+    assert.deepEqual(rules.hk0,{a:true,c:false,cDisabled:true});
+    const expectedRepeat=1/Math.sqrt(2/(4.5546**2)+4/(2.8514**2))/10;
+    assert(Math.abs(rules.repeat-expectedRepeat)<1e-14);
+    record(`${language}: rutile 001 warns, 111 is allowed, hk0 disables c, and signed mixed hkl uses full metric`);
+
+    const synthetic = await evaluate(app(`(() => {
+      const core=f.contentWindow.eval("XRDCore");
+      const parameters={...core.DEFAULTS,film_material:"VO2",film_system:"tetragonal",film_basis:"rutile",
+        substrate_material:"TiO2",film_lattice_a:4.5546,film_lattice_c:2.8514,
+        substrate_lattice_a:4.5937,substrate_lattice_c:2.9587,hkl:"002",wavelength:1.11197,
+        film_planes:30,substrate_planes:0,fwhm_deg:0,background:0.001};
+      const angles=Array.from({length:161},(_,i)=>44+i*0.025);
+      const intensity=core.simulate(angles,parameters); parameters.film_lattice_c=2.88;
+      const variables=Object.fromEntries(Array.from(d.querySelectorAll('[data-fit-key]'),row=>{
+        const key=row.dataset.fitKey;return [key,{enabled:key==="film_lattice_c",low:key==="film_lattice_c"?2.82:d.getElementById("fit_low_"+key).value,high:key==="film_lattice_c"?2.91:d.getElementById("fit_high_"+key).value}];
+      }));
+      return {format:"xrd-studio-project-v1",parameters,scan:{xmin:44,xmax:48,step:0.025},
+        measurement_name:"synthetic-rutile-c.dat",measurement:{two_theta_deg:angles,intensity_raw:intensity},
+        fit_settings:{range:[44,48],variables,thickness_unit:"nm",max_evaluations:400}};
+    })()`));
+    await loadProjectFixture(synthetic,`rutile-${language}-c-input`);
+    await appClick("runFit");
+    await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled && !d.getElementById("fitResult").hidden`),`${language} rutile c fit`,60000);
+    const fit=await saveCurrentProject(`rutile-${language}-c-fit`);
+    assert.deepEqual(Object.keys(fit.fit_result.bounds),["film_lattice_c"]);
+    assert.equal(fit.parameters.film_lattice_a,4.5546);
+    assert(Math.abs(fit.parameters.film_lattice_c-2.8514)<0.0001);
+    assert(Math.abs(fit.fit_result.thickness_nm-fit.parameters.film_planes*fit.parameters.film_lattice_c/10)<1e-10);
+    const fitText=await evaluate(app(`d.getElementById("fitLatticeLabel").textContent+d.getElementById("fitGradientLabel").textContent+d.getElementById("fitResult").textContent`));
+    assert.match(fitText,/Δc/);if(language==="en")assert(!/[가-힣]/.test(fitText));
+    await loadProjectFixture(fit,`rutile-${language}-c-roundtrip`);
+    const roundtrip=await saveCurrentProject(`rutile-${language}-c-resaved`);
+    assert.deepEqual(roundtrip.parameters,fit.parameters);
+    assert.deepEqual(roundtrip.fit_settings.variables.film_lattice_c,fit.fit_settings.variables.film_lattice_c);
+    assert.equal(await evaluate(app(`d.getElementById("fitResult").hidden`)),false);
+    record(`${language}: browser Worker recovers c with a fixed, uses c for thickness and restores current rutile fit`,{c:fit.parameters.film_lattice_c});
+
+    const geometry = await evaluate(app(`(async () => {
+      const p={...f.contentWindow.eval("readForm")().parameters,film_planes:10,substrate_planes:50,fwhm_deg:0,hkl:"1 -1 2",angle_offset_deg:0};
+      const expected=2*Math.asin(p.wavelength*Math.sqrt(2/(p.substrate_lattice_a**2)+4/(p.substrate_lattice_c**2))/2)*180/Math.PI;
+      const angles=Array.from({length:101},(_,i)=>expected-1+i*0.02);
+      const intensities=angles.map(x=>1+Math.exp(-(((x-expected-0.04)/0.08)**2)));
+      f.contentWindow.eval("applyConfig")({parameters:p,scan:{xmin:angles[0],xmax:angles.at(-1),step:0.02}});
+      f.contentWindow.eval("setMeasurement")({angles,intensities,filename:"alignment.dat"},{adjustScan:false});
+      await f.contentWindow.eval("alignObservedAsSto")();
+      const offset=Number(d.getElementById("angle_offset_deg").value);
+      const observedMarker=f.contentWindow.eval("state.simulation.substratePeak");
+      d.getElementById("hkl").value="001";d.getElementById("hkl").dispatchEvent(new Event("input",{bubbles:true}));
+      await f.contentWindow.eval("alignObservedAsSto")();
+      return {offset,expected,observedMarker,rejected:d.getElementById("status").classList.contains("error"),message:d.getElementById("status").textContent};
+    })()`));
+    assert(Math.abs(geometry.offset-0.04)<1e-5);
+    assert(Math.abs(geometry.observedMarker-(geometry.expected+0.04))<1e-5);
+    assert(geometry.rejected); assert.match(geometry.message,language==="ko"?/계통 소멸/:/systematically absent/);
+    if(language==="en")assert(!/[가-힣]/.test(geometry.message));
+    record(`${language}: TiO2 signed-hkl marker and alignment use tetragonal metric; forbidden 001 cannot align`,geometry);
+
+    const legacy=structuredClone(baseline);delete legacy.fit_result;
+    for(const key of ["film_system","film_basis","film_lattice_c"])delete legacy.parameters[key];
+    delete legacy.fit_settings.variables.film_lattice_c;
+    await loadProjectFixture(legacy,`rutile-${language}-legacy-cubic`);
+    const migrated=await saveCurrentProject(`rutile-${language}-legacy-resaved`);
+    assert.equal(migrated.parameters.film_system,"cubic");assert.equal(migrated.parameters.film_basis,"perovskite");assert.equal(migrated.parameters.film_lattice_c,0);
+    assert.equal(await evaluate(app(`d.getElementById("filmCField").hidden`)),true);
+    const oldSelection=await evaluate(app(`(() => {d.getElementById("film_lattice_a").value="4.017";d.getElementById("film_material").value="BaTiO3";d.getElementById("film_material").dispatchEvent(new Event("change",{bubbles:true}));return Number(d.getElementById("film_lattice_a").value);})()`));
+    assert.equal(oldSelection,4.017,"Old cubic material choices must not overwrite a with a computational default");
+    const zeroC=structuredClone(fit);delete zeroC.fit_result;zeroC.parameters.film_lattice_c=0;zeroC.parameters.hkl="110";
+    await loadProjectFixture(zeroC,`rutile-${language}-zero-c`);
+    const zeroSaved=await saveCurrentProject(`rutile-${language}-zero-c-resaved`);
+    assert.equal(zeroSaved.parameters.film_lattice_c,0);
+    record(`${language}: legacy metadata normalizes to cubic, old material selection preserves a, and explicit c=0 round-trips`);
+    await loadProjectFixture(baseline,`rutile-${language}-baseline-restore`);
+  }
+
+
+  async function fringeFlow(language, baseline) {
+    const fixture = await evaluate(app(`(() => {
+      const core=f.contentWindow.eval("XRDCore"), wavelength=1.11197;
+      const angles=Array.from({length:401},(_,i)=>40+i*0.01);
+      const q=x=>4*Math.PI/wavelength*Math.sin(x*Math.PI/360);
+      const origin=q(40.2), intensities=angles.map(x=>1+0.4*Math.cos((q(x)-origin)*500));
+      const peaks=Array.from({length:10},(_,i)=>2*Math.asin((origin+i*2*Math.PI/500)*wavelength/(4*Math.PI))*180/Math.PI);
+      return {project:{format:"xrd-studio-project-v1",parameters:{...core.DEFAULTS,
+        film_lattice_a:4,film_planes:125,substrate_planes:0,fwhm_deg:0,wavelength,hkl:"002"},
+        scan:{xmin:40,xmax:44,step:0.01},measurement_name:"synthetic-fringes.dat",
+        measurement:{two_theta_deg:angles,intensity_raw:intensities}},peaks};
+    })()`));
+    await loadProjectFixture(fixture.project,`fringes-${language}-input`);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    assert.match(await evaluate(app(`d.getElementById("fringeStatus").textContent`)),language==="ko"?/아직 추정하지/:/not estimated/i);
+    await appClick("fringeUseVisible");
+    assert.deepEqual(await evaluate(app(`[Number(d.getElementById("fringe_min").value),Number(d.getElementById("fringe_max").value)]`)),[40,44]);
+    await appClick("estimateFringes");
+    await waitFor(app(`!d.getElementById("estimateFringes").disabled`),`${language} automatic fringe estimate`);
+    const auto=await evaluate(app(`f.contentWindow.eval("state.fringe")`));
+    assert.equal(auto?.method,"automatic");assert(Math.abs(auto.thickness_nm-50)<0.5);
+    assert(auto.peak_angles.length>=4);assert(auto.relative_scatter<0.12);
+    assert.equal(await evaluate(app(`d.getElementById("fringeWarning").hidden`)),true);
+    record(`${language}: fringes start unestimated; explicit ROI action estimates synthetic consecutive fringes`,{thickness:auto.thickness_nm,peaks:auto.peak_angles.length,scatter:auto.relative_scatter});
+
+    const setManual=async peaks=>evaluate(app(`(() => {const input=d.getElementById("fringe_manual_peaks");input.value=${JSON.stringify(peaks.map(v=>v.toFixed(10)).join(", "))};input.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+    const estimate=async()=>{await appClick("estimateFringes");await waitFor(app(`!d.getElementById("estimateFringes").disabled`),`${language} manual fringe estimate`);};
+    await setManual(fixture.peaks);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    await estimate();
+    const manual=await evaluate(app(`f.contentWindow.eval("state.fringe")`));
+    assert.equal(manual.method,"manual");assert(Math.abs(manual.thickness_nm-50)<1e-6);
+    assert.deepEqual(manual.orders,Array.from({length:10},(_,i)=>i));assert(manual.angular_residual_rms_deg<1e-8);
+    assert.equal(await evaluate(app(`d.querySelector("#fringePeaks tr:nth-child(2) td").textContent`)),"n=0");
+    assert.equal(await evaluate(app(`d.getElementById("fringeWarning").hidden`)),true);
+    assert.match(await evaluate(app(`d.getElementById("fringeModelLabel").textContent`)),language==="ko"?/환산값/:/converted/i);
+    await evaluate(app(`(() => {const t=d.getElementById("film_thickness_nm");t.value="60";t.dispatchEvent(new Event("change",{bubbles:true}));return true;})()`));
+    assert.equal(await evaluate(app(`d.getElementById("fringeWarning").hidden`)),false);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),false,"Model-only edits preserve measured fringe estimate");
+    const warning=await evaluate(app(`d.getElementById("fringeWarning").textContent`));
+    assert.match(warning,/5%/);assert.match(warning,language==="ko"?/신뢰 구간이 아닙니다/:/not a statistical confidence interval/i);
+    if(language==="en")assert(!/[가-힣]/.test(await evaluate(app(`d.getElementById("fringeCard").textContent`))));
+    await cardScreenshot("fringeCard",`fringes-warning-${language}`);
+    record(`${language}: manual q-order thickness is 50 nm, model-only edits keep it, and >5% difference warns without claiming uncertainty`);
+
+    const project=await saveCurrentProject(`fringes-${language}-saved`);
+    assert(project.fringe_settings?.manual_peaks);assert.deepEqual(project.fringe_settings.roi,["40","44"]);
+    assert.equal(project.fringe_result,undefined);assert.equal(project.fringe_diagnostic,undefined);
+    await loadProjectFixture(project,`fringes-${language}-roundtrip`);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true,"Project load must not reuse an old fringe result");
+    assert.equal(await evaluate(app(`d.getElementById("fringe_manual_peaks").value`)),project.fringe_settings.manual_peaks);
+    await estimate();
+    for(const [key,value] of [["wavelength","1.112"],["angle_offset_deg","0.001"],["fringe_min","40.01"]]){
+      await evaluate(app(`(() => {const n=d.getElementById(${JSON.stringify(key)});n.value=${JSON.stringify(value)};n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+      assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true,`${key} must invalidate fringe diagnostic`);
+      await estimate();
+      assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),false);
+    }
+    record(`${language}: projects preserve only fringe inputs; wavelength, zero offset and ROI edits invalidate and require explicit reevaluation`);
+
+    await setManual([fixture.peaks[0],fixture.peaks[1],fixture.peaks[2],fixture.peaks[5],fixture.peaks[6]]);
+    await estimate();
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),false,"Rejected indexing must retain residual and order evidence");
+    assert.equal(await evaluate(app(`f.contentWindow.eval("state.fringe")`)),null);
+    assert.match(await evaluate(app(`d.getElementById("fringeThickness").textContent`)),language==="ko"?/추정 불가/:/not estimated/i);
+    assert.match(await evaluate(app(`d.getElementById("fringeStatus").textContent`)),language==="ko"?/품질 조건/:/quality checks/i);
+    assert.match(await evaluate(app(`d.getElementById("fringeAngleResidual").textContent`)),/°/);
+    assert.equal(await evaluate(app(`d.getElementById("fringeWarning").hidden`)),true);
+    await evaluate(app(`(() => {const n=d.getElementById("fringe_manual_orders");n.value="0, 1, 2, 5, 6";n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+    await estimate();
+    const indexed=await evaluate(app(`f.contentWindow.eval("state.fringe")`));
+    assert.deepEqual(indexed.orders,[0,1,2,5,6]);assert(Math.abs(indexed.thickness_nm-50)<.02);assert(indexed.angular_residual_rms_deg<.0001);
+    const indexedProject=await saveCurrentProject(`fringes-${language}-indexed-saved`);
+    assert.equal(indexedProject.fringe_settings.manual_orders,"0, 1, 2, 5, 6");
+    await loadProjectFixture(indexedProject,`fringes-${language}-indexed-roundtrip`);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    assert.equal(await evaluate(app(`d.getElementById("fringe_manual_orders").value`)),"0, 1, 2, 5, 6");
+    await estimate();assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),false);
+    record(`${language}: explicit integer orders recover skipped fringes, report angular RMS and survive input-only save/load`);
+    await evaluate(app(`(() => {const n=d.getElementById("fringe_manual_orders");n.value="0, 1, 2.5, 5, 6";n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+    await estimate();assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    assert.equal(await evaluate(app(`d.getElementById("fringeStatus").classList.contains("error")`)),true);
+    await evaluate(app(`(() => {const n=d.getElementById("fringe_manual_orders");n.value="";n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+    await setManual(fixture.peaks.slice(0,3));await estimate();
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    assert.equal(await evaluate(app(`d.getElementById("fringeStatus").classList.contains("error")`)),true);
+    await evaluate(app(`(() => {
+      const angles=Array.from({length:401},(_,i)=>40+i*.01);
+      f.contentWindow.eval("setMeasurement")({angles,intensities:angles.map(()=>1),filename:"flat.dat"},{adjustScan:false});return true;
+    })()`));
+    assert.deepEqual(await evaluate(app(`[d.getElementById("fringe_min").value,d.getElementById("fringe_max").value,d.getElementById("fringe_manual_peaks").value,d.getElementById("fringe_manual_orders").value]`)),["","","",""]);
+    await appClick("fringeUseVisible");await estimate();
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden`)),true);
+    assert.match(await evaluate(app(`d.getElementById("fringeStatus").textContent`)),language==="ko"?/추정 불가/:/not estimated/i);
+    record(`${language}: skipped orders, fewer than four peaks and flat measured data produce no false thickness; new measurement resets inputs`);
+    await loadProjectFixture(baseline,`fringes-${language}-baseline-restore`);
+  }
+
+
+  async function peakFlow(language, baseline) {
+    const fixture=await evaluate(app(`(() => {
+      const core=f.contentWindow.eval("XRDCore");
+      const angles=Array.from({length:251},(_,i)=>42+i*.01);
+      const profile=(x,c,w,eta)=>(1-eta)*Math.sqrt(4*Math.log(2)/Math.PI)/w*Math.exp(-4*Math.log(2)*((x-c)/w)**2)+eta*2/(Math.PI*w)/(1+4*((x-c)/w)**2);
+      const intensities=angles.map(x=>3+2*(x-42)/2.5+80*profile(x,43,.12,.2)+8*profile(x,43.38,.18,.3));
+      return {format:"xrd-studio-project-v1",parameters:{...core.DEFAULTS,hkl:"002",wavelength:1.11197,film_planes:20,substrate_planes:0,fwhm_deg:0},scan:{xmin:42,xmax:44.5,step:.01},measurement_name:"synthetic-peak-shapes.dat",measurement:{two_theta_deg:angles,intensity_raw:intensities}};
+    })()`));
+    await loadProjectFixture(fixture,`peaks-${language}-input`);
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);
+    assert.match(await evaluate(app(`d.getElementById("peakStatus").textContent`)),language==="ko"?/아직 분석하지/:/not analyzed/i);
+    await appClick("peakUseVisible");
+    assert.deepEqual(await evaluate(app(`[Number(d.getElementById("peak_min").value),Number(d.getElementById("peak_max").value)]`)),[42,44.5]);
+    const before=await evaluate(app(`f.contentWindow.eval("readForm")()`));
+    const fit=async()=>{await appClick("fitPeaks");await waitFor(app(`!d.getElementById("fitPeaks").disabled`),`${language} descriptive peaks`,60000);assert(!await evaluate(app(`d.getElementById("peakStatus").classList.contains("error")`)));};
+    await fit();
+    const result=await evaluate(app(`f.contentWindow.eval("state.peakAnalysis")`));
+    assert.equal(result.soft_log.loss,"soft_log");assert.equal(result.linear.loss,"linear");
+    for(const item of [result.soft_log,result.linear]) {
+      assert.equal(item.peak_count,2);assert.deepEqual(item.roi,[42,44.5]);assert(item.evaluations>0&&item.evaluations<=2000);
+      for(const [i,target] of [43,43.38].entries())assert(Math.abs(item.components[i].center_deg-target)<.02);
+      assert(item.components[1].area_fraction<.15);
+      for(const c of item.components)assert(Math.abs(c.c_00l_angstrom-2*c.d_angstrom)<1e-12);
+    }
+    assert.deepEqual(await evaluate(app(`f.contentWindow.eval("readForm")()`)),before,"Descriptive analysis must not transfer values to physical simulation");
+    assert.equal(await evaluate(app(`d.querySelectorAll("#peakPlot path").length`)),3);
+    assert.equal(await evaluate(app(`d.querySelectorAll("#peakComparison tr").length`)),2);
+    const text=await evaluate(app(`d.getElementById("peakCard").textContent`));
+    assert.match(text,language==="ko"?/약하게 결정된 성분/:/weakly determined component/i);
+    assert(!text.includes(language==="ko"?"검출됨":"Detected ·"));
+    if(language==="en")assert(!/[가-힣]/.test(text));
+    await cardScreenshot("peakCard",`peak-decomposition-${language}`);
+    await cardScreenshot("peakCard",`peak-decomposition-${language}-mobile`,true);
+    record(`${language}: explicit two-profile ROI fits both losses, compares centers/areas, previews both curves and leaves physical simulation unchanged`,{soft:result.soft_log.components,linear:result.linear.components});
+
+    await evaluate(app(`(() => {for(const [id,value] of [["peak_reference_center","44"],["peak_reference_d","1.48"]]){const n=d.getElementById(id);n.value=value;n.dispatchEvent(new Event("input",{bubbles:true}));}return true;})()`));
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);await fit();
+    const reference=await evaluate(app(`f.contentWindow.eval("state.peakAnalysis.soft_log")`));
+    for(const c of reference.components){const expected=1.48*Math.sin(44*Math.PI/360)/Math.sin(c.center_deg*Math.PI/360);assert(Math.abs(c.d_reference_angstrom-expected)<1e-12);assert(Math.abs(c.c_00l_reference_angstrom-2*expected)<1e-12);}
+    assert.equal(await evaluate(app(`d.getElementById("peakReferenceDHeader").hidden`)),false);
+    const saved=await saveCurrentProject(`peaks-${language}-saved`);
+    assert.equal(saved.peak_settings.reference_center,"44");assert.equal(saved.peak_settings.reference_d,"1.48");assert.equal(saved.peak_result,undefined);assert.equal(saved.peak_analysis,undefined);
+    await loadProjectFixture(saved,`peaks-${language}-roundtrip`);
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);
+    assert.equal(await evaluate(app(`d.getElementById("peak_reference_center").value`)),"44");
+    record(`${language}: optional verified-reference conversion is separate; project saves only diagnostic inputs`);
+
+    await evaluate(app(`(() => {const n=d.getElementById("peak_count");n.value="1";n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));await fit();
+    const single=await evaluate(app(`f.contentWindow.eval("state.peakAnalysis")`));
+    assert.equal(single.soft_log.components.length,1);assert.equal(single.linear.components.length,1);
+    assert(single.soft_log.soft_log_rmse>result.soft_log.soft_log_rmse);
+    await evaluate(app(`(() => {const n=d.getElementById("hkl");n.value="110";n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);await fit();
+    const mixed=await evaluate(app(`f.contentWindow.eval("state.peakAnalysis.soft_log.components")`));assert.equal(mixed[0].c_00l_angstrom,null);assert.equal(mixed[0].c_00l_reference_angstrom,null);
+    for(const [key,value] of [["wavelength","1.112"],["angle_offset_deg","0.001"],["peak_min","42.01"]]) {
+      await evaluate(app(`(() => {const n=d.getElementById(${JSON.stringify(key)});n.value=${JSON.stringify(value)};n.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
+      assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);await fit();
+    }
+    await evaluate(app(`(() => {const m=f.contentWindow.eval("state.measurement");f.contentWindow.eval("setMeasurement")(m,{adjustScan:false});return true;})()`));
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);
+    assert.deepEqual(await evaluate(app(`[d.getElementById("peak_min").value,d.getElementById("peak_max").value,d.getElementById("peak_reference_center").value,d.getElementById("peak_reference_d").value,d.getElementById("peak_count").value]`)),["","","","","2"]);
+    record(`${language}: one-profile comparison works; non-00l omits c, and calibration, ROI, indexing and new data invalidate peak results`);
+    await loadProjectFixture(baseline,`peaks-${language}-baseline-restore`);
+  }
+
   async function refinementFlow(language, baseline) {
+    await rutileFlow(language, baseline);
+    await fringeFlow(language, baseline);
+    await peakFlow(language, baseline);
     const labels = await evaluate(app(`({
       modes:Array.from(d.getElementById("lp_mode").options, option=>({value:option.value,label:option.textContent})),
       fields:${JSON.stringify(newModelKeys)}.map(key=>({key,value:d.getElementById(key).value,
@@ -500,9 +808,13 @@ try {
       `${baseline.fit_result.initial_log_rmse === null ? "—" : baseline.fit_result.initial_log_rmse.toFixed(3)} → ${baseline.fit_result.best_log_rmse.toFixed(3)}`);
     record(`${language}: legacy or outdated model fits require refitting while matching revisions restore scores and all projects retain data`);
 
-    const chosen = {film_interface_width: 2.25, film_thickness_sigma: 1.5, background_slope: -0.04,
+    const chosen = {film_interface_width: 2.25, film_thickness_sigma: 1.5, film_intensity_scale:0.6, background_slope: -0.04,
       resolution_halo_fraction:0.0075, resolution_halo_width:4.5};
     await evaluate(app(`(() => {
+      // Round-trip every extension together on a modest integration grid.
+      // The separate cancellation case still exercises the expensive model.
+      d.getElementById("substrate_planes").value="400";
+      d.getElementById("substrate_planes").dispatchEvent(new Event("input",{bubbles:true}));
       for (const [key,value] of Object.entries(${JSON.stringify(chosen)})) {
         d.getElementById(key).value=String(value);
         d.getElementById(key).dispatchEvent(new Event("input",{bubbles:true}));
@@ -552,6 +864,7 @@ try {
       ["film_interface_width", 1.4, [0,3], 0.3],
       ["film_thickness_sigma", 1.5, [0,3], 0.4],
       ["background_slope", 0.08, [-0.15,0.15], -0.03],
+      ["film_intensity_scale", 1.8, [0.1,3], 0.4],
       ["resolution_halo_fraction", 0.015, [0.001,0.03], 0.003],
       ["resolution_halo_width", 3.8, [1.2,6], 1.8],
     ]) {
@@ -562,7 +875,7 @@ try {
           film_lattice_a:3.93,film_planes:30,substrate_planes:0,fwhm_deg:0,
           film_lattice_gradient_a:0,film_interface_width:0,film_thickness_sigma:0,
           background:0.001,background_slope:0,lp_mode:"none"};
-        if (${halo}) Object.assign(parameters,{substrate_planes:300,fwhm_deg:0.04,
+        if (${halo || key === "film_intensity_scale"}) Object.assign(parameters,{substrate_planes:300,fwhm_deg:0.04,
           background:1e-6,resolution_halo_fraction:0.015,resolution_halo_width:3.8});
         const angles=Array.from({length:201},(_,i)=>31+i*0.02);
         const intensity=core.simulate(angles,{...parameters,[${JSON.stringify(key)}]:${target}});
@@ -589,6 +902,7 @@ try {
       assert(result.fit_result.evaluations > 0 && result.fit_result.evaluations <= 400);
       assert(Number.isFinite(result.parameters[key]) && result.parameters[key]>=bounds[0] && result.parameters[key]<=bounds[1]);
       assert(Math.abs(result.parameters[key]-initial)>(key === "resolution_halo_fraction" ? 0.005 : 0.02), `${key}: optimizer must update enabled variable`);
+      if (key === "film_intensity_scale") assert(Math.abs(result.parameters[key]-target) < 0.02, "Browser Worker must recover synthetic film intensity scale");
       if (halo) assert(Math.abs(result.parameters[key]-target) < (key === "resolution_halo_fraction" ? 0.001 : 0.1),
         `${key}: browser Worker must recover the synthetic target`);
       assert(result.fit_result.best_fit_merit <= result.fit_result.initial_fit_merit + 1e-12);
@@ -605,9 +919,10 @@ try {
       d.getElementById("film_interface_width").value="5";
       d.getElementById("film_thickness_nm").value="150";
       d.getElementById("film_thickness_nm").dispatchEvent(new Event("change",{bubbles:true}));
-      d.getElementById("fit_evaluations").value="1200";
+      d.getElementById("fit_evaluations").value="6000";
       return true;
     })()`));
+    assert.equal(await evaluate(app(`d.getElementById("fit_evaluations").value`)), "6000");
     const cancelledValues = await evaluate(app(`Array.from(d.querySelectorAll("#settingsForm input,#settingsForm select"),node=>[node.id,node.value,node.checked])`));
     await appClick("runFit");
     await waitFor(app(`!d.getElementById("cancelFit").hidden`), `${language} expensive fit begins`);
@@ -616,7 +931,7 @@ try {
     await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled`), `${language} expensive fit cancels`, 10000);
     assert.deepEqual(await evaluate(app(`Array.from(d.querySelectorAll("#settingsForm input,#settingsForm select"),node=>[node.id,node.value,node.checked])`)), cancelledValues);
     assert.match(await evaluate(app(`d.getElementById("fitProgress").textContent`)), language === "ko" ? /중단/ : /cancel|stop/i);
-    record(`${language}: gradient, taper, thickness distribution and halo fit cancels without changing inputs`, {elapsedMs:Date.now()-cancelStart});
+    record(`${language}: 6,000-evaluation gradient, taper, thickness distribution and halo fit starts and cancels without changing inputs`, {elapsedMs:Date.now()-cancelStart});
     await loadProjectFixture(haloRefitFixture, `refinement-${language}-halo-after-cancel`);
     await appClick("runFit");
     await waitFor(app(`d.getElementById("cancelFit").hidden && !d.getElementById("runFit").disabled &&
@@ -646,6 +961,39 @@ try {
     !d.getElementById("fitResult").hidden && /복원/.test(d.getElementById("fitProgress").textContent)`), "saved settings and fit restore");
   record("CSV download contains 1,001 curve rows; settings download and file input restore parameters, sample, and fit result");
   await refinementFlow("ko", saved);
+  // Local private evidence only: these scans are not copied into public assets.
+  if (analysisFixtures) for (const sample of ["626","631"]) {
+    const candidatePath=path.resolve(analysisFixtures,`DESCRIPTIVE_PROJECT_${sample}_2026_10_22.json`);
+    const candidate=JSON.parse(await readFile(candidatePath,"utf8"));
+    // Independently regress the exact saved calibration and indexed maxima.
+    // Rounded-angle, zero-offset audit values describe a different request.
+    const parseList=text=>text.trim().split(/[\s,;]+/).filter(Boolean).map(Number);
+    const maxima=parseList(candidate.fringe_settings.manual_peaks), orders=parseList(candidate.fringe_settings.manual_orders);
+    const {wavelength,angle_offset_deg}=candidate.parameters;
+    const q=maxima.map(a=>4*Math.PI/wavelength*Math.sin((a-angle_offset_deg)*Math.PI/360));
+    const average=a=>a.reduce((sum,v)=>sum+v,0)/a.length, meanQ=average(q), meanOrder=average(orders);
+    const slope=q.reduce((sum,v,i)=>sum+(orders[i]-meanOrder)*(v-meanQ),0)/orders.reduce((sum,v)=>sum+(v-meanOrder)**2,0);
+    const expectedThickness=2*Math.PI/slope/10;
+    const expectedRms=Math.sqrt(average(maxima.map((a,i)=>(a-(angle_offset_deg+360/Math.PI*Math.asin((meanQ+slope*(orders[i]-meanOrder))*wavelength/(4*Math.PI))))**2)));
+    await loadProjectFixture(candidate,`actual-${sample}-diagnostic-input`);
+    assert.equal(await evaluate(app(`f.contentWindow.eval("state.measurement.angles.length")`)),2002);
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden && d.getElementById("peakResult").hidden`)),true);
+    await appClick("estimateFringes");await waitFor(app(`!d.getElementById("estimateFringes").disabled`),`${sample} indexed measured fringes`);
+    const fringe=await evaluate(app(`f.contentWindow.eval("state.fringe")`));
+    assert(fringe);assert(Math.abs(fringe.thickness_nm-expectedThickness)<.0001);assert(Math.abs(fringe.angular_residual_rms_deg-expectedRms)<.000002);
+    assert.equal(await evaluate(app(`d.querySelectorAll("#fringePeaks tr").length`)),fringe.orders.length+1);
+    await appClick("fitPeaks");await waitFor(app(`!d.getElementById("fitPeaks").disabled`),`${sample} descriptive double-method peaks`,60000);
+    assert.equal(await evaluate(app(`d.getElementById("peakStatus").classList.contains("error")`)),false);
+    const peak=await evaluate(app(`f.contentWindow.eval("state.peakAnalysis")`));
+    assert(peak);for(const item of [peak.soft_log,peak.linear]){assert.equal(item.components.length,2);assert.deepEqual(item.roi,[45.45,46.75]);assert(item.components.every(c=>Number.isFinite(c.c_00l_reference_angstrom)));}
+    await writeFile(path.join(evidence,`actual-${sample}-browser-diagnostics.json`),JSON.stringify({fringe,peak},null,2));
+    await evaluate(app(`(() => {d.querySelector("#fringeResult details").open=true;return true;})()`));
+    await cardScreenshot("fringeCard",`actual-${sample}-indexed-fringes`);
+    await cardScreenshot("peakCard",`actual-${sample}-peak-decomposition`);
+    record(`Actual #${sample}: 2,002-point candidate imports; indexed fringe residuals and both descriptive fits run from explicit saved inputs`,{thickness:fringe.thickness_nm,angularRms:fringe.angular_residual_rms_deg,soft:peak.soft_log.components,linear:peak.linear.components});
+  }
+  await loadProjectFixture(saved,"actual-diagnostics-baseline-restore");
+
   const beforeReload = authCalls;
   await reload(); await appReady();
   assert.equal(authCalls, beforeReload, "Reload must restore using tab session, without a password request");
@@ -714,6 +1062,7 @@ try {
     source: {siteHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: siteRoot, encoding: "utf8"}).trim(),
       gateSha256: hash(await readFile(path.join(siteRoot, "assets/js/xrd-gate.js"))),
       backendSha256: hash(appsScriptSource), appSha256: hash(JSON.stringify(files)),
+      assetSha256:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,hash(content)])),
       xrdHead: execFileSync("git", ["rev-parse", "HEAD"], {cwd: xrdRoot, encoding: "utf8"}).trim()},
     network, responses, errors, blocked, cancelledInterceptions}, null, 2));
   console.log(`Evidence: ${evidence}`);

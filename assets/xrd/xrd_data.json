@@ -469,11 +469,29 @@
   "TiO2": {
    "label": "TiO₂ (rutile)",
    "system": "tetragonal",
-   "a": 4.594,
-   "c": 2.959,
-   "basis": "lattice",
-   "electrons": 88,
-   "suggest": "002"
+   "a": 4.5937,
+   "c": 2.9587,
+   "basis": "rutile",
+   "suggest": "002",
+   "u": 0.3053,
+   "cation": "Ti",
+   "note": "Rutile atomic basis. Lattice a/c presets round the Abrahams-Bernstein 298 K values; oxygen u=0.3053 is approximate and is not their refined u=0.30479(10). This is not one exact published refinement. Replaces the older effective-scatterer model; rerun saved fits.",
+   "references": [
+    {
+     "citation": "S. C. Abrahams and J. L. Bernstein, Rutile: Normal Probability Plot Analysis and Accurate Measurement of Crystal Structure, Journal of Chemical Physics 55, 3206-3211 (1971)",
+     "doi": "10.1063/1.1676569",
+     "url": "https://doi.org/10.1063/1.1676569",
+     "supports": "At 298 K, a=4.593659(19) A and c=2.958682(8) A round to the application presets. The reported u=0.30479(10) is not the application u=0.3053.",
+     "verification": "Numerical abstract reproduction inspected in the source audit; original publisher table was unavailable."
+    },
+    {
+     "citation": "N. Gonzalez Szwacki et al., Orthorhombic Symmetry and Anisotropic Properties of Rutile TiO2, Journal of Physical Chemistry C 127, 19240-19249 (2023)",
+     "doi": "10.1021/acs.jpcc.3c04573",
+     "url": "https://juser.fz-juelich.de/record/1018244/files/J%20Phys%20Chem%20C127%20%282023%29%2019240-19249.pdf",
+     "location": "Table 7, tetragonal room-temperature S1 refinement",
+     "supports": "Independent tetragonal reference a=4.59379(9) A, c=2.95873(6) A, u=0.3052(5). The application u=0.3053 is an approximate preset, not an exact reproduction of this refinement. The alternative symmetry discussed in the paper is not adopted."
+    }
+   ]
   },
   "custom": {
    "label": "Other — type the lattice in",
@@ -494,5 +512,143 @@
   "220",
   "222"
  ],
- "max_miller_index": 30
+ "max_miller_index": 30,
+ "films": {
+  "SrRuO3": {
+   "label": "SrRuO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "Sr",
+    "Ru"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "SrTiO3": {
+   "label": "SrTiO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "Sr",
+    "Ti"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "BaTiO3": {
+   "label": "BaTiO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "Ba",
+    "Ti"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "LaAlO3": {
+   "label": "LaAlO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "La",
+    "Al"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "LaMnO3": {
+   "label": "LaMnO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "La",
+    "Mn"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "LaNiO3": {
+   "label": "LaNiO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "La",
+    "Ni"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "SrVO3": {
+   "label": "SrVO3",
+   "system": "cubic",
+   "basis": "perovskite",
+   "a": 3.93,
+   "c": 3.93,
+   "sites": [
+    "Sr",
+    "V"
+   ],
+   "note": "Pseudocubic ABO3 model; lattice values remain user inputs."
+  },
+  "VO2": {
+   "label": "VO₂ (rutile R)",
+   "system": "tetragonal",
+   "basis": "rutile",
+   "a": 4.5546,
+   "c": 2.8514,
+   "u": 0.3,
+   "cation": "V",
+   "note": "Rutile R phase only. Oxygen u=0.300 is rounded from the u=0.3001 reference adopted by Eyert, not a sample refinement. Monoclinic M1 is not supported.",
+   "references": [
+    {
+     "citation": "V. Eyert, The metal-insulator transitions of VO2: A band theoretical approach (2002)",
+     "doi": "10.1002/andp.20025140902",
+     "url": "https://arxiv.org/pdf/cond-mat/0210558",
+     "location": "Section 3.1, author preprint page 11",
+     "supports": "Rutile atomic basis and adopted a=4.5546 A, c=2.8514 A, u=0.3001; application rounds u to 0.300."
+    },
+    {
+     "citation": "D. B. McWhan et al., X-ray diffraction study of metallic VO2, Physical Review B 10, 490-495 (1974)",
+     "doi": "10.1103/PhysRevB.10.490",
+     "url": "https://doi.org/10.1103/PhysRevB.10.490",
+     "supports": "Original experiment cited by Eyert for the adopted reference structure.",
+     "verification": "Publisher abstract inspected by the source audit; original coordinate tables not independently inspected."
+    }
+   ]
+  },
+  "TiO2": {
+   "label": "TiO₂ (rutile)",
+   "system": "tetragonal",
+   "basis": "rutile",
+   "a": 4.5937,
+   "c": 2.9587,
+   "u": 0.3053,
+   "cation": "Ti",
+   "note": "Rutile atomic basis. Lattice a/c presets round the Abrahams-Bernstein 298 K values; oxygen u=0.3053 is approximate and is not their refined u=0.30479(10). This is not one exact published refinement.",
+   "references": [
+    {
+     "citation": "S. C. Abrahams and J. L. Bernstein, Rutile: Normal Probability Plot Analysis and Accurate Measurement of Crystal Structure, Journal of Chemical Physics 55, 3206-3211 (1971)",
+     "doi": "10.1063/1.1676569",
+     "url": "https://doi.org/10.1063/1.1676569",
+     "supports": "At 298 K, a=4.593659(19) A and c=2.958682(8) A round to the application presets. The reported u=0.30479(10) is not the application u=0.3053.",
+     "verification": "Numerical abstract reproduction inspected in the source audit; original publisher table was unavailable."
+    },
+    {
+     "citation": "N. Gonzalez Szwacki et al., Orthorhombic Symmetry and Anisotropic Properties of Rutile TiO2, Journal of Physical Chemistry C 127, 19240-19249 (2023)",
+     "doi": "10.1021/acs.jpcc.3c04573",
+     "url": "https://juser.fz-juelich.de/record/1018244/files/J%20Phys%20Chem%20C127%20%282023%29%2019240-19249.pdf",
+     "location": "Table 7, tetragonal room-temperature S1 refinement",
+     "supports": "Independent tetragonal reference a=4.59379(9) A, c=2.95873(6) A, u=0.3052(5). The application u=0.3053 is an approximate preset, not an exact reproduction of this refinement. The alternative symmetry discussed in the paper is not adopted."
+    }
+   ]
+  }
+ }
 }
