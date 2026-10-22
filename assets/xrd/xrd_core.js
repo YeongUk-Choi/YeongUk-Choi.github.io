@@ -90,6 +90,51 @@ const XRDCore = (() => {
     return false;
   }
 
+  function rutileReflectionAbsent(hkl) {
+    const [h, k, l] = parseHkl(hkl);
+    return (h === 0 && (k + l) % 2 !== 0) || (k === 0 && (h + l) % 2 !== 0);
+  }
+
+  function filmCatalogue() {
+    return Object.entries(DATA.films).map(([id, entry]) => ({id, ...entry}));
+  }
+
+  function filmLattice(params) {
+    const entry = DATA.films[params.film_material || DEFAULTS.film_material];
+    if (!entry) throw new Error("Unsupported film material");
+    const system = params.film_system ?? entry.system;
+    const a = params.film_lattice_a ?? DEFAULTS.film_lattice_a;
+    return [a, system === "cubic" ? null : params.film_lattice_c || a, system];
+  }
+
+  function filmActiveLatticeKey(params) {
+    const [h, k] = parseHkl(params.hkl || DEFAULTS.hkl);
+    return filmLattice(params)[2] === "tetragonal" && h === 0 && k === 0 ? "film_lattice_c" : "film_lattice_a";
+  }
+
+  function filmActiveLatticeValue(params) {
+    const [a, c] = filmLattice(params);
+    return filmActiveLatticeKey(params) === "film_lattice_c" ? c : a;
+  }
+
+  function filmLocalLattice(params, active) {
+    const [a, c, system] = filmLattice(params);
+    const [h, k, l] = parseHkl(params.hkl);
+    if (system === "cubic") return [active, null, system];
+    if (h === 0 && k === 0) return [a, active, system];
+    return [active, l ? c * active / a : c, system];
+  }
+
+  function filmProjectedRepeat(params) {
+    const [a, c, system] = filmLattice(params);
+    return projectedRepeat(a, parseHkl(params.hkl || DEFAULTS.hkl), c, system);
+  }
+
+  function filmBraggAngle(params) {
+    const [a, c, system] = filmLattice(params);
+    return braggAngle(a, params.hkl || DEFAULTS.hkl, params.wavelength ?? DEFAULTS.wavelength, c, system);
+  }
+
   // ---- scattering -------------------------------------------------------
   function atomicScatteringFactor(element, sinThetaOverLambda) {
     const c = DATA.form_factors[element];
@@ -112,11 +157,58 @@ const XRDCore = (() => {
             fb * bi + oxygenFactor * (o1i + o2i + o3i)];
   }
 
+  function rutileBasisAmplitude(q, s, a, c, hkl, cation, u, oxygenFactor = null) {
+    const [h, k, l] = hkl;
+    const phase = q * dSpacing(a, hkl, c, "tetragonal");
+    const metal = atomicScatteringFactor(cation, s);
+    const oxygen = oxygenFactor === null ? atomicScatteringFactor("O", s) : oxygenFactor;
+    const [cr, ci] = cExpI(0.5 * phase * (h + k + l));
+    let real = metal * (1 + cr), imag = metal * ci;
+    // Conventional [0,1) cell coordinates define the off-Bragg termination.
+    for (const [x, y, z] of [[u,u,0],[1-u,1-u,0],[0.5+u,0.5-u,0.5],[0.5-u,0.5+u,0.5]]) {
+      const [r, i] = cExpI(phase * (h*x + k*y + l*z));
+      real += oxygen * r; imag += oxygen * i;
+    }
+    return [real, imag];
+  }
+
+  function legacyFilm(params) {
+    return params.film_system === "cubic" && params.film_basis === "perovskite";
+  }
+
+  function filmBasisAmplitude(q, s, params, hkl, oxygenFactor, localActive = null) {
+    const [a, c, system] = localActive === null ? filmLattice(params) : filmLocalLattice(params, localActive);
+    const entry = DATA.films[params.film_material];
+    if (params.film_basis === "rutile") {
+      return rutileBasisAmplitude(q, s, a, c || a, hkl, entry.cation, entry.u, oxygenFactor);
+    }
+    if (params.film_basis === "lattice") {
+      if (entry.cation) return [2 * atomicScatteringFactor(entry.cation, s) + 4 * oxygenFactor, 0];
+      const [first, second] = DATA.film_sites[params.film_material];
+      return [atomicScatteringFactor(first,s) + atomicScatteringFactor(second,s) + 3*oxygenFactor, 0];
+    }
+    const [first, second] = DATA.film_sites[params.film_material];
+    if (system === "cubic") return basisAmplitude(q, s, a, hkl, first, second, oxygenFactor);
+    const factors = {A:atomicScatteringFactor(first,s), B:atomicScatteringFactor(second,s), O:oxygenFactor};
+    const phase = q * dSpacing(a, hkl, c, system);
+    const [h,k,l] = hkl;
+    let real = 0, imag = 0;
+    for (const [site,x,y,z] of DATA.basis) {
+      const [r,i] = cExpI(phase*(h*x+k*y+l*z));
+      real += factors[site]*r; imag += factors[site]*i;
+    }
+    return [real,imag];
+  }
+
   function substrateAmplitude(q, s, params, hkl, oxygenFactor) {
     const entry = DATA.substrates[params.substrate_material];
     if (entry.basis === "perovskite") {
       return basisAmplitude(q, s, params.substrate_lattice_a, hkl,
                             entry.sites[0], entry.sites[1], oxygenFactor);
+    }
+    if (entry.basis === "rutile") {
+      const [a,c] = substrateLattice(params);
+      return rutileBasisAmplitude(q,s,a,c || a,hkl,entry.cation,entry.u,oxygenFactor);
     }
     if (reflectionAbsent(hkl, entry.centering || "P")) return [0, 0];
     const electrons = entry.electrons === undefined ? 100 : entry.electrons;
@@ -143,6 +235,23 @@ const XRDCore = (() => {
     const count = filmCount === null ? params.film_planes : filmCount;
     const gradient = params.film_lattice_gradient_a;
     if (!gradient || count < 2) return [];
+    if (!legacyFilm(params)) {
+      const mean = filmActiveLatticeValue(params);
+      const projection = filmProjectedRepeat(params) / mean;
+      const localStep = Math.abs(gradient * projection / (count - 1));
+      const maxCells = count <= 64 ? 1 : Math.max(1, Math.trunc(Math.sqrt(0.08 / Math.max(maxQ * localStep, 1e-30))));
+      const pieces = [];
+      let height = 0;
+      for (let start = 0; start < count; start += maxCells) {
+        const cells = Math.min(maxCells, count-start);
+        const midpoint = start + (cells-1)/2;
+        const active = mean + gradient * (midpoint/(count-1)-0.5);
+        const period = projection * active;
+        pieces.push([height,period,active,cells]);
+        height += cells*period;
+      }
+      return pieces;
+    }
     const projection = projectedRepeat(1, hkl);
     const localStep = Math.abs((gradient * projection) / (count - 1));
     const maxCells = count <= 64
@@ -185,6 +294,17 @@ const XRDCore = (() => {
 
   function gradientFilmAmplitude(q, s, params, hkl, profile, oxygenFactor, filmCount = null) {
     const count = filmCount === null ? params.film_planes : filmCount;
+    if (!legacyFilm(params)) {
+      let real = 0, imag = 0;
+      for (const [origin,period,active,cells] of profile) {
+        const [br,bi] = filmBasisAmplitude(q,s,params,hkl,oxygenFactor,active);
+        const [or,oi] = cExpI(q*origin);
+        const [gr,gi] = geometricSum(q*period,cells);
+        const [r,i] = cMul(...cMul(br,bi,or,oi),gr,gi);
+        real += r; imag += i;
+      }
+      return [real,imag];
+    }
     const sites = DATA.film_sites[params.film_material];
     const coefficients = filmBasisCoefficients(hkl,
       atomicScatteringFactor(sites[0], s), atomicScatteringFactor(sites[1], s), oxygenFactor);
@@ -309,7 +429,7 @@ const XRDCore = (() => {
     for (const [count, weight] of thicknessDistribution(params.film_planes, params.film_thickness_sigma)) {
       const profile = filmProfile(params, hkl, maxQ, count);
       const tapered = params.film_interface_width && count
-        ? taperedProfile(count, filmPeriod, params.film_lattice_a, profile, params.film_interface_width) : [];
+        ? taperedProfile(count, filmPeriod, filmActiveLatticeValue(params), profile, params.film_interface_width) : [];
       cost += tapered.length ? tapered.reduce((sum, piece) => sum + piece[4].length, 0) : Math.max(1, profile.length);
       domains.push([count, weight, profile, tapered]);
     }
@@ -346,15 +466,14 @@ const XRDCore = (() => {
       const [tr, ti] = cMul(fr, fi, pr, pi);
       [sr, si] = cMul(tr, ti, gr, gi);
     }
-    const [aElement, bElement] = DATA.film_sites[params.film_material];
-    const filmBasis = basisAmplitude(q, s, params.film_lattice_a, hkl, aElement, bElement, oxygenFactor);
+    const filmBasis = filmBasisAmplitude(q, s, params, hkl, oxygenFactor);
     let intensity = 0;
     for (const [count, weight, profile, tapered] of domains) {
       let ar = 0, ai = 0;
       if (tapered.length) {
         for (const [origin, period, localA, cells, factors] of tapered) {
           const [fr, fi] = profile.length
-            ? basisAmplitude(q, s, localA, hkl, aElement, bElement, oxygenFactor) : filmBasis;
+            ? filmBasisAmplitude(q, s, params, hkl, oxygenFactor, localA) : filmBasis;
           let wr = 0, wi = 0;
           for (const [frequency, cr, ci] of factors) {
             const [gr, gi] = geometricSum(q * period + frequency, cells);
@@ -371,6 +490,10 @@ const XRDCore = (() => {
       } else if (count) {
         const [gr, gi] = geometricSum(q * filmPeriod, count);
         [ar, ai] = cMul(filmBasis[0], filmBasis[1], gr, gi);
+      }
+      if (params.film_intensity_scale !== 1) {
+        const amplitudeScale = Math.sqrt(params.film_intensity_scale);
+        ar *= amplitudeScale; ai *= amplitudeScale;
       }
       ar += sr; ai += si;
       intensity += weight * (ar * ar + ai * ai);
@@ -389,13 +512,15 @@ const XRDCore = (() => {
         const [gr, gi] = gradientFilmAmplitude(q, s, params, hkl, profile, oxygenFactor);
         ar += gr; ai += gi;
       } else {
-        const sites = DATA.film_sites[params.film_material];
-        const [fr, fi] = basisAmplitude(q, s, params.film_lattice_a, hkl,
-                                        sites[0], sites[1], oxygenFactor);
+        const [fr, fi] = filmBasisAmplitude(q, s, params, hkl, oxygenFactor);
         const [sr, si] = geometricSum(q * filmPeriod, params.film_planes);
         const [mr, mi] = cMul(fr, fi, sr, si);
         ar += mr; ai += mi;
       }
+    }
+    if (params.film_intensity_scale !== 1) {
+      const amplitudeScale = Math.sqrt(params.film_intensity_scale);
+      ar *= amplitudeScale; ai *= amplitudeScale;
     }
     if (params.substrate_planes) {
       const [fr, fi] = substrateAmplitude(q, s, params, hkl, oxygenFactor);
@@ -425,13 +550,34 @@ const XRDCore = (() => {
     film_lattice_gradient_a: 0,
     film_interface_width: 0, film_thickness_sigma: 0,
     lp_mode: "none", background_slope: 0,
+    film_system: null, film_basis: null, film_lattice_c: 0,
+    // Empirical relative film strength; coherent amplitude uses sqrt(scale).
+    film_intensity_scale: 1,
   };
 
-  function simulate(angles, rawParams) {
+  function normalizeParams(rawParams) {
     const params = Object.assign({}, DEFAULTS, rawParams);
+    const entry = DATA.films[params.film_material];
+    if (!entry) throw new Error(`Supported films: ${Object.keys(DATA.films).join(", ")}`);
+    params.film_system = params.film_system ?? entry.system;
+    params.film_basis = params.film_basis ?? entry.basis;
+    if (!["cubic", "tetragonal"].includes(params.film_system)) {
+      throw new Error("film_system must be cubic or tetragonal; monoclinic M1 is not supported");
+    }
+    if (!["perovskite", "rutile", "lattice"].includes(params.film_basis)) {
+      throw new Error("film_basis must be perovskite, rutile, or lattice");
+    }
+    if (params.film_basis === "perovskite" && !DATA.film_sites[params.film_material]) throw new Error("This film has no perovskite ABO3 basis");
+    if (params.film_basis === "rutile" && !entry.cation) throw new Error("This film has no rutile basis");
+    if (!Number.isFinite(params.film_lattice_a) || params.film_lattice_a <= 0) throw new Error("film_lattice_a must be positive");
+    if (!Number.isFinite(params.film_lattice_c) || params.film_lattice_c < 0) throw new Error("film_lattice_c must be zero (use a) or positive");
+    if (!Number.isFinite(params.film_lattice_gradient_a) || Math.abs(params.film_lattice_gradient_a) > 0.2) throw new Error("film_lattice_gradient_a must be within -0.2 to 0.2 Å");
+    if (filmActiveLatticeValue(params) - Math.abs(params.film_lattice_gradient_a)/2 <= 0) throw new Error("The film lattice gradient gives a nonpositive local lattice parameter");
+    if (params.film_lattice_gradient_a && params.film_planes < 2) throw new Error("A film lattice gradient needs at least two film repeats");
     for (const [name, lower, upper, message] of [
       ["film_interface_width", 0, 1000, "film_interface_width must be within 0 to 1,000 repeats"],
       ["film_thickness_sigma", 0, 20, "film_thickness_sigma must be within 0 to 20 repeats"],
+      ["film_intensity_scale", 0, 100, "film_intensity_scale must be within 0 to 100"],
       ["background_slope", -1, 1, "background_slope must be within -1 to 1 per degree"],
       ["resolution_halo_fraction", 0, 0.2, "resolution_halo_fraction must be within 0 to 0.2"],
       ["resolution_halo_width", 1, 20, "resolution_halo_width must be within 1 to 20"]
@@ -442,12 +588,17 @@ const XRDCore = (() => {
       "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"].includes(params.lp_mode)) {
       throw new Error("Unsupported lp_mode");
     }
+    return params;
+  }
+
+  function simulate(angles, rawParams) {
+    const params = normalizeParams(rawParams);
     const x = angles;
     if (x[0] - params.angle_offset_deg <= 0 || x[x.length - 1] - params.angle_offset_deg >= 180) {
       throw new Error("Angle offset moves the scan outside the physical 0–180° range");
     }
     const hkl = parseHkl(params.hkl);
-    const filmPeriod = projectedRepeat(params.film_lattice_a, hkl);
+    const filmPeriod = filmProjectedRepeat(params);
     const [subA, subC, subSystem] = substrateLattice(params);
     const substratePeriod = projectedRepeat(subA, hkl, subC, subSystem);
     const sigma = params.fwhm_deg / (2 * Math.sqrt(2 * Math.log(2)));
@@ -564,6 +715,8 @@ const XRDCore = (() => {
 
   return {useData, parseHkl, dSpacing, braggAngle, projectedRepeat, reflectionAbsent,
           atomicScatteringFactor, simulate, substrateLattice, DEFAULTS,
+          filmCatalogue, filmLattice, filmProjectedRepeat, filmBraggAngle, filmActiveLatticeKey,
+          normalizeParams, rutileReflectionAbsent, rutileBasisAmplitude,
           thicknessDistribution, lpFactor,
           get data() { return DATA; }};
 })();

@@ -2,8 +2,8 @@
 
 const $ = (id) => document.getElementById(id);
 // Saved fit scores are only valid for the numerical model that produced them.
-const modelRevision = "gaussian-10sigma-v1";
-const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3"]);
+const modelRevision = "rutile-fringe-v1";
+const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3", "VO2", "TiO2"]);
 /* Any hkl may be typed: "110", "1 1 0", "(1,1,0)", or "0 0 6" for a hexagonal
    substrate. Four-index hexagonal input (hkil) drops the redundant third index. */
 const maxMillerIndex = 30;
@@ -30,18 +30,25 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
-const optionalModelDefaults = {film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_c", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
+const optionalModelDefaults = {film_intensity_scale:1,film_lattice_c:0,film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
 const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
-const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
+const fitKeys = ["film_lattice_a", "film_lattice_c", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_c", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
-const fitBudgetOptions = new Set([400, 800, 1200]);
+const fitBudgetOptions = new Set([400, 800, 1200, 3000, 6000]);
 const substrateFitMax = 30000;
-const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "lp_mode"]);
+const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "film_system", "film_basis", "lp_mode"]);
 /* Filled from /api/catalogue at start-up: the substrate list the server knows. */
 const substrates = new Map();
+const films = new Map([
+  ["VO2", {id:"VO2", label:"VO₂ (rutile R)", system:"tetragonal", basis:"rutile", a:4.5546, c:2.8514}],
+  ["TiO2", {id:"TiO2", label:"TiO₂ (rutile)", system:"tetragonal", basis:"rutile", a:4.5937, c:2.9587}]
+]);
+function filmMetadata(material) {
+  return films.get(material) || {system:"cubic", basis:"perovskite"};
+}
 const state = {
   measurement: null,
   simulation: null,
@@ -60,7 +67,12 @@ const state = {
   fitBusy: false,
   fitResult: null,
   residual: null,
-  lastFilmPlanes: 60
+  lastFilmPlanes: 60,
+  filmFitMode: null,
+  fringe: null,
+  fringeRequest: 0,
+  peakAnalysis: null,
+  peakRequest: 0
 };
 
 function setStatus(message, error = false) {
@@ -84,6 +96,7 @@ function setFitBusy(busy) {
   // the one control that has to stay alive while everything else is locked
   const cancel = $("cancelFit");
   if (cancel) { cancel.hidden = !busy; cancel.disabled = false; }
+  if (!busy) refreshFitControls();
 }
 
 /* A fit runs for about a minute in one blocking request, so the page asks the
@@ -133,6 +146,7 @@ function hideFitResult({clearResidual = false} = {}) {
     state.residual = null;
     $("residualCard").hidden = true;
   }
+  renderFringeComparison();
 }
 
 function markFitResultStale() {
@@ -142,6 +156,7 @@ function markFitResultStale() {
   $("fitStale").hidden = false;
   $("fitResult").querySelector(".eyebrow").textContent = "PREVIOUS FIT";
   $("fit-result-title").textContent = "이전 피팅 결과 · 재피팅 필요";
+  renderFringeComparison();
 }
 
 function markCurveStale() {
@@ -177,71 +192,96 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",film_interface_width:"박막 경계 테이퍼 폭 w",film_thickness_sigma:"박막 두께 분포 σN",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",resolution_halo_fraction:"넓은 분해능 성분 비율 f",resolution_halo_width:"넓은 분해능 성분 폭 배수 m",background:"상대 배경",background_slope:"로그 배경 기울기",lp_mode:"편광·조사 길이 가정",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
+  if (id === "film_lattice_gradient_a") return filmGradientLabel();
+  return ({wavelength:"파장",film_lattice_a:"박막 평균 격자상수 a",film_lattice_c:"박막 평균 격자상수 c",film_lattice_gradient_a:"박막 수직 격자 구배 Δa",film_interface_width:"박막 경계 테이퍼 폭 w",film_thickness_sigma:"박막 두께 분포 σN",film_intensity_scale:"박막 상대 강도 배율",substrate_lattice_a:"기판 격자상수",substrate_lattice_c:"기판 c축",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"기판 유효 간섭 반복 수",angle_offset_deg:"2θ 영점 보정",fwhm_deg:"기구 Gaussian FWHM",resolution_halo_fraction:"넓은 분해능 성분 비율 f",resolution_halo_width:"넓은 분해능 성분 폭 배수 m",background:"상대 배경",background_slope:"로그 배경 기울기",lp_mode:"편광·조사 길이 가정",xmin:"2θ 시작",xmax:"2θ 끝",step:"계산 간격"})[id] || id;
 }
 
 function gcd3(h, k, l) {
   const gcd = (x, y) => y ? gcd(y, x % y) : x;
   return gcd(gcd(Math.abs(h), Math.abs(k)), Math.abs(l)) || 1;
 }
-function projectedRepeatNm(a, hkl) {
-  // The film is treated as pseudo-cubic, so one repeat along the reflection
-  // normal is d(hkl) times the number of planes that share a basis.
+// Shared by desktop and static UI: no dependency on the browser-only kernel.
+function latticeD(a, hkl, c = 0, system = "cubic") {
   let values;
   try { values = parseHkl(hkl); } catch (error) { return NaN; }
-  const [h, k, l] = values;
-  const factor = gcd3(h, k, l) / Math.sqrt(h*h + k*k + l*l);
-  return a * factor / 10;
+  const [h, k, l] = values, axisC = c || a;
+  if (!(a > 0) || !(axisC > 0)) return NaN;
+  const inverse = system === "hexagonal" ? 4 * (h*h + h*k + k*k) / (3*a*a) + l*l/(axisC*axisC)
+    : system === "tetragonal" ? (h*h + k*k)/(a*a) + l*l/(axisC*axisC)
+    : (h*h + k*k + l*l)/(a*a);
+  return 1 / Math.sqrt(inverse);
+}
+function projectedRepeatNm(a, hkl, c = 0, system = "cubic") {
+  try { return latticeD(a, hkl, c, system) * gcd3(...parseHkl(hkl)) / 10; }
+  catch (error) { return NaN; }
+}
+function filmFormGeometry() {
+  return {film_lattice_a:Number($("film_lattice_a").value), film_lattice_c:Number($("film_lattice_c").value),
+    film_system:$("film_system").value, film_basis:$("film_basis").value, hkl:$("hkl").value};
+}
+function filmRepeatNm(p) { return projectedRepeatNm(p.film_lattice_a, p.hkl, p.film_lattice_c, p.film_system); }
+function filmAxisMode(p = filmFormGeometry()) {
+  if (p.film_system !== "tetragonal") return "cubic";
+  try { const [h,k,l] = parseHkl(p.hkl); return !h && !k ? "00l" : !l ? "hk0" : "mixed"; }
+  catch (error) { return "mixed"; }
+}
+function filmActiveMean(p) { return filmAxisMode(p) === "00l" ? p.film_lattice_c || p.film_lattice_a : p.film_lattice_a; }
+function filmGradientLabel(p = filmFormGeometry()) {
+  return filmAxisMode(p) === "00l" ? "박막 수직 격자 구배 Δc" : "박막 수직 격자 구배 Δa";
+}
+function rutileReflectionAbsent(values) {
+  const [h,k,l] = values;
+  return (h === 0 && (k+l)%2 !== 0) || (k === 0 && (h+l)%2 !== 0);
 }
 
-function thicknessToPlanes(thicknessNm, a, hkl) {
+function thicknessToPlanes(thicknessNm, a, hkl, c = 0, system = "cubic") {
   if (!Number.isFinite(thicknessNm) || thicknessNm < 0) throw new Error("Thickness는 0 nm 이상이어야 합니다.");
-  if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(projectedRepeatNm(a, hkl))) throw new Error("Thickness 환산에는 유효한 격자상수와 반사면이 필요합니다.");
-  const planes = Math.round(thicknessNm / projectedRepeatNm(a, hkl));
+  if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(projectedRepeatNm(a, hkl, c, system))) throw new Error("Thickness 환산에는 유효한 격자상수와 반사면이 필요합니다.");
+  const planes = Math.round(thicknessNm / projectedRepeatNm(a, hkl, c, system));
   if (planes > 20000) throw new Error("Thickness가 모델 최대 반복 단위 20,000개를 초과합니다.");
   return planes;
 }
 
 function updateThicknessConversion() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value, thickness = Number($("film_thickness_nm").value);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry(), thickness = Number($("film_thickness_nm").value);
   const node = $("filmThicknessQuantization"), boundNote = $("fitThicknessBoundNote");
-  if (!(a > 0) || !Number.isFinite(projectedRepeatNm(a, hkl)) || !Number.isFinite(thickness) || thickness < 0) {
+  if (!(a > 0) || !Number.isFinite(projectedRepeatNm(a, hkl, c, system)) || !Number.isFinite(thickness) || thickness < 0) {
     node.textContent = "격자상수·반사면·Thickness를 입력하세요.";
     boundNote.textContent = "격자상수·반사면을 입력하면 N 환산 범위를 표시합니다.";
     return;
   }
-  const repeat = projectedRepeatNm(a, hkl), planes = Math.round(thickness / repeat);
+  const repeat = projectedRepeatNm(a, hkl, c, system), planes = Math.round(thickness / repeat);
   state.lastFilmPlanes = planes;
   node.textContent = `모델 계산값 ${trimNumber(planes * repeat, 4)} nm · 환산 N = ${planes.toLocaleString("ko-KR")}`;
   const low = Number($("fit_low_film_planes").value), high = Number($("fit_high_film_planes").value);
   if (Number.isFinite(low) && Number.isFinite(high) && low < high) {
     const nLow = Math.ceil(low / repeat - 1e-7), nHigh = Math.floor(high / repeat + 1e-7);
-    boundNote.textContent = `현재 a·hkl 기준 N = ${nLow.toLocaleString("ko-KR")}–${nHigh.toLocaleString("ko-KR")} · 실제 두께 경계는 피팅 중에도 유지`;
+    boundNote.textContent = `현재 격자·hkl 기준 N = ${nLow.toLocaleString("ko-KR")}–${nHigh.toLocaleString("ko-KR")} · 실제 두께 경계는 피팅 중에도 유지`;
   } else boundNote.textContent = "Thickness 경계를 입력하면 N 환산 범위를 표시합니다.";
 }
 
 function syncThicknessForLatticeChange() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value;
-  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl))) $("film_thickness_nm").value = trimNumber(state.lastFilmPlanes * projectedRepeatNm(a, hkl), 8);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry();
+  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl, c, system))) $("film_thickness_nm").value = trimNumber(state.lastFilmPlanes * projectedRepeatNm(a, hkl, c, system), 8);
   updateThicknessConversion();
 }
 
 function snapThicknessToModel() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value, thickness = Number($("film_thickness_nm").value);
-  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl)) && Number.isFinite(thickness) && thickness >= 0) {
-    const planes = thicknessToPlanes(thickness, a, hkl);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry(), thickness = Number($("film_thickness_nm").value);
+  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl, c, system)) && Number.isFinite(thickness) && thickness >= 0) {
+    const planes = thicknessToPlanes(thickness, a, hkl, c, system);
     state.lastFilmPlanes = planes;
-    $("film_thickness_nm").value = trimNumber(planes * projectedRepeatNm(a, hkl), 8);
+    $("film_thickness_nm").value = trimNumber(planes * projectedRepeatNm(a, hkl, c, system), 8);
   }
   updateThicknessConversion();
 }
 
 function readForm() {
   const parameters = {hkl: $("hkl").value, film_material: $("film_material").value,
-                      substrate_material: $("substrate_material").value, lp_mode: $("lp_mode").value};
+                      substrate_material: $("substrate_material").value, film_system:$("film_system").value, film_basis:$("film_basis").value, lp_mode: $("lp_mode").value};
   const scan = {};
   for (const key of numericParameters) parameters[key] = numericField(key);
-  parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl);
+  parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl, parameters.film_lattice_c, parameters.film_system);
   for (const key of numericScan) scan[key] = numericField(key);
   return validateConfig({parameters, scan});
 }
@@ -251,6 +291,11 @@ function validateConfig(input) {
   const source = input.parameters, scanSource = input.scan;
   const parameters = {hkl: String(source.hkl), film_material: String(source.film_material),
                       substrate_material: String(source.substrate_material ?? "SrTiO3"), lp_mode: String(source.lp_mode ?? "none")};
+  parameters.film_system = source.film_system ?? filmMetadata(parameters.film_material).system;
+  parameters.film_basis = source.film_basis ?? filmMetadata(parameters.film_material).basis;
+  if (!["cubic", "tetragonal"].includes(parameters.film_system)) throw new Error("박막 결정계는 입방 또는 정방을 선택하세요. M1은 지원하지 않습니다.");
+  if (!["perovskite", "rutile", "lattice"].includes(parameters.film_basis)) throw new Error("박막 구조 인자 모델을 목록에서 선택하세요.");
+  if (parameters.film_basis !== "lattice" && parameters.film_basis !== filmMetadata(parameters.film_material).basis) throw new Error("선택한 재료와 구조 인자 모델이 맞지 않습니다.");
   const scan = {};
   parameters.hkl = normaliseHkl(parameters.hkl);
   if (!materials.has(parameters.film_material)) throw new Error("지원하지 않는 박막 재료입니다.");
@@ -271,18 +316,20 @@ function validateConfig(input) {
     scan[key] = Number(scanSource[key]);
     if (!Number.isFinite(scan[key])) throw new Error(`${labelFor(key)}에 유한한 숫자를 입력하세요.`);
   }
+  if (parameters.film_lattice_c < 0) throw new Error("박막 c축은 0(=a와 동일) 이상이어야 합니다.");
   if (parameters.substrate_lattice_c < 0) throw new Error("기판 c축은 0(=a와 동일) 이상이어야 합니다.");
   for (const key of ["wavelength", "film_lattice_a", "substrate_lattice_a"]) {
     if (parameters[key] <= 0) throw new Error(`${labelFor(key)}는 0보다 커야 합니다.`);
   }
-  if (Math.abs(parameters.film_lattice_gradient_a) > 0.2) throw new Error("박막 수직 격자 구배 Δa는 −0.20~+0.20 Å 안에 있어야 합니다.");
-  if (parameters.film_lattice_a - Math.abs(parameters.film_lattice_gradient_a) / 2 <= 0) throw new Error("박막 평균 a와 Δa를 조정해 계면·표면의 격자 간격이 모두 양수가 되게 하세요.");
+  if (Math.abs(parameters.film_lattice_gradient_a) > 0.2) throw new Error("박막 수직 격자 구배는 −0.20~+0.20 Å 안에 있어야 합니다.");
+  if (filmActiveMean(parameters) - Math.abs(parameters.film_lattice_gradient_a) / 2 <= 0) throw new Error("박막 평균 격자와 구배를 조정해 계면·표면의 격자 간격이 모두 양수가 되게 하세요.");
   for (const key of ["film_planes", "substrate_planes"]) {
     const maximum = key === "substrate_planes" ? substrateFitMax : 20000;
     if (!Number.isInteger(parameters[key]) || parameters[key] < 0 || parameters[key] > maximum) throw new Error(`${labelFor(key)}는 0~${maximum.toLocaleString("ko-KR")}의 정수여야 합니다.`);
   }
-  if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("박막 수직 격자 구배 Δa를 적용하려면 박막 반복 단위 N이 2 이상이어야 합니다.");
+  if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("박막 수직 격자 구배를 적용하려면 박막 반복 단위 N이 2 이상이어야 합니다.");
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("박막 또는 기판 반복 수 중 하나는 0보다 커야 합니다.");
+  if (parameters.film_intensity_scale < 0 || parameters.film_intensity_scale > 100) throw new Error("박막 상대 강도 배율은 0~100으로 입력하세요.");
   if (parameters.fwhm_deg < 0) throw new Error("기구 폭은 0 이상이어야 합니다.");
   if (parameters.resolution_halo_fraction < 0 || parameters.resolution_halo_fraction > 0.2) throw new Error("넓은 분해능 성분 비율 f는 0~0.2로 입력하세요.");
   if (parameters.resolution_halo_width < 1 || parameters.resolution_halo_width > 20) throw new Error("넓은 분해능 성분 폭 배수 m은 1~20으로 입력하세요.");
@@ -301,17 +348,23 @@ function validateConfig(input) {
 }
 
 function applyConfig(config) {
+  config = validateConfig(config);
+  if (Number($("wavelength").value) !== config.parameters.wavelength || Number($("angle_offset_deg").value) !== config.parameters.angle_offset_deg) { invalidateFringes(); invalidatePeaks(); }
+  if ($("hkl").value !== config.parameters.hkl) invalidatePeaks();
   markCurveStale();
   $("hkl").value = config.parameters.hkl;
   $("film_material").value = config.parameters.film_material;
   $("lp_mode").value = config.parameters.lp_mode;
+  $("film_system").value = config.parameters.film_system;
+  $("film_basis").value = config.parameters.film_basis;
   if (config.parameters.substrate_material && substrates.has(config.parameters.substrate_material)) {
     $("substrate_material").value = config.parameters.substrate_material;
   }
   for (const key of numericParameters) $(key).value = String(config.parameters[key]);
   state.lastFilmPlanes = config.parameters.film_planes;
-  $("film_thickness_nm").value = trimNumber(config.parameters.film_planes * projectedRepeatNm(config.parameters.film_lattice_a, config.parameters.hkl), 8);
+  $("film_thickness_nm").value = trimNumber(config.parameters.film_planes * filmRepeatNm(config.parameters), 8);
   for (const key of numericScan) $(key).value = String(config.scan[key]);
+  refreshFilmControls();
   refreshSubstrateNote();
   updateThicknessConversion();
 }
@@ -324,6 +377,15 @@ async function loadCatalogue() {
   let data;
   try { data = await getJson("/api/catalogue"); }
   catch (error) { return; }                       // keep the typed-in values working
+  const filmSelect = $("film_material"), wantedFilm = filmSelect.value;
+  if (data.film_catalogue?.length) {
+    filmSelect.innerHTML = "";
+    for (const entry of data.film_catalogue) {
+      films.set(entry.id, entry); materials.add(entry.id);
+      const option = document.createElement("option"); option.value = entry.id; option.textContent = entry.label; filmSelect.append(option);
+    }
+    filmSelect.value = materials.has(wantedFilm) ? wantedFilm : "SrRuO3";
+  }
   const select = $("substrate_material");
   const wanted = select.value || "SrTiO3";
   select.innerHTML = "";
@@ -335,19 +397,56 @@ async function loadCatalogue() {
     select.append(option);
   }
   select.value = substrates.has(wanted) ? wanted : "SrTiO3";
-  const quick = $("hklQuick");
-  quick.innerHTML = "";
-  for (const label of data.common_hkl || []) {
-    const button = document.createElement("button");
-    button.type = "button"; button.textContent = label;
-    button.addEventListener("click", () => {
-      $("hkl").value = label;
-      $("hkl").dispatchEvent(new Event("input", {bubbles: true}));
-      refreshSubstrateNote();
-    });
+  refreshFilmControls();
+  refreshSubstrateNote();
+}
+
+function refreshHklQuick() {
+  const quick = $("hklQuick"); quick.innerHTML = "";
+  const rutile = $("film_basis").value === "rutile" || substrates.get($("substrate_material").value)?.basis === "rutile";
+  for (const label of rutile ? ["002", "004", "110", "220"] : ["001", "002", "003", "004", "110", "111", "220", "006"]) {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+    button.addEventListener("click", () => { $("hkl").value = label; $("hkl").dispatchEvent(new Event("input", {bubbles:true})); });
     quick.append(button);
   }
-  refreshSubstrateNote();
+}
+
+function refreshFilmControls({resetFit = false} = {}) {
+  const p = filmFormGeometry(), mode = filmAxisMode(p), tet = p.film_system === "tetragonal";
+  $("filmCField").hidden = !tet;
+  document.querySelector('[data-fit-key="film_lattice_c"]').hidden = !tet;
+  if (resetFit || state.filmFitMode !== mode) {
+    $("fit_enable_film_lattice_a").checked = mode !== "00l";
+    $("fit_enable_film_lattice_c").checked = mode === "00l";
+  }
+  state.filmFitMode = mode;
+  $("filmGradientName").textContent = filmGradientLabel(p);
+  $("fitGradientName").textContent = filmGradientLabel(p);
+  $("filmGradientNote").textContent = mode === "00l"
+    ? "Δc = 표면 c − 계면 c입니다. 00l에서는 c만 수직 간격을 정하며 a는 결정할 수 없습니다. Thickness는 평균 c로 환산합니다."
+    : mode === "mixed" ? "Δa = 표면 a − 계면 a입니다. 혼합 반사에서는 a와 c가 같은 비율로 변하는 법선 간격 구배를 가정합니다. 단일 반사로 a와 c를 독립적으로 결정할 수 없어 기본값은 c 고정입니다."
+    : "Δa = 표면 a − 계면 a입니다. 반사면 법선 간격의 선형 변화를 가정합니다. Thickness는 평균 격자와 hkl로 환산합니다.";
+  let note = p.film_basis === "rutile"
+    ? "루틸 원자 구조 인자 모델입니다. 격자와 산소 좌표는 기준 프리셋이며 시료의 구조 정련값이 아닙니다. VO₂는 R상 가정이며 M1은 지원하지 않습니다. 단일 반사 피팅만으로 M1/R을 구별할 수 없습니다."
+    : p.film_basis === "lattice" ? "유효 산란체 격자 모델입니다. 상대 강도는 원자 구조를 완전히 반영하지 않습니다."
+    : "ABO₃ 원자 구조 인자 모델입니다. 입력 격자와 반사 배정을 확인하세요.";
+  try { if (p.film_basis === "rutile" && rutileReflectionAbsent(parseHkl(p.hkl))) note = "선택한 반사는 루틸의 계통 소멸 조건입니다. 정확한 Bragg 위치의 반사는 사라지지만 유한 박막의 주변 산란은 남을 수 있습니다. " + note; } catch (error) {}
+  $("filmNote").textContent = note;
+  refreshFitControls(); refreshHklQuick();
+}
+
+function onFilmChange() {
+  const entry = filmMetadata($("film_material").value);
+  $("film_system").value = entry.system; $("film_basis").value = entry.basis;
+  if (["VO2", "TiO2"].includes($("film_material").value)) $("film_lattice_a").value = String(entry.a);
+  $("film_lattice_c").value = entry.system === "tetragonal" ? String(entry.c || entry.a) : "0";
+  if (entry.basis === "rutile") $("hkl").value = "002";
+  for (const axis of ["a", "c"]) {
+    const value = Number($("film_lattice_" + axis).value) || Number($("film_lattice_a").value);
+    $("fit_low_film_lattice_" + axis).value = trimNumber(value * .94, 5);
+    $("fit_high_film_lattice_" + axis).value = trimNumber(value * 1.06, 5);
+  }
+  refreshFilmControls({resetFit:true}); refreshSubstrateNote(); syncThicknessForLatticeChange();
 }
 
 /* Changing the substrate fills in that crystal's numbers; every one of them
@@ -360,7 +459,8 @@ function onSubstrateChange() {
   if (entry.suggest) $("hkl").value = entry.suggest;
   markCurveStale();
   refreshSubstrateNote();
-  updateThicknessConversion();
+  refreshFilmControls();
+  syncThicknessForLatticeChange();
 }
 
 /* Mirrors reflection_absent() in xrd_model.py: lattice centering decides whether
@@ -392,18 +492,235 @@ function refreshSubstrateNote() {
   if (!entry) { note.textContent = ""; if (cField) cField.hidden = true; return; }
   if (cField) cField.hidden = entry.system === "cubic";
   const parts = [`<b>${entry.label}</b> · ${systemNames[entry.system] || entry.system}`];
-  if (entry.note) parts.push(entry.note);
-  parts.push(entry.modelled
+  if (entry.note && entry.basis !== "rutile") parts.push(entry.note);
+  parts.push(entry.basis === "rutile" ? "루틸 원자 구조 인자로 계산합니다. 기준 격자와 산소 좌표는 시료의 구조 정련값이 아닙니다." : entry.modelled
     ? "ABO₃ 구조 인자로 계산합니다 — 피크 위치와 상대 강도 모두 모델값입니다."
     : "격자만 쓰는 근사입니다 — 피크 위치와 간섭 무늬 간격은 맞지만 기판 피크의 상대 높이는 근사값입니다(유효 간섭 반복 수로 흡수됩니다).");
-  if (entry.system !== "cubic") parts.push("육방 지수는 (h k l) 세 자리로 입력하세요. 예: 사파이어 (0006) → 006");
+  if (entry.system === "hexagonal") parts.push("육방 지수는 (h k l) 세 자리로 입력하세요. 예: 사파이어 (0006) → 006");
   let warning = "";
   try {
-    if (reflectionAbsent(parseHkl($("hkl").value), entry.centering || "P")) {
-      warning = `<b class="sw-absent">이 반사는 ${entry.label}의 격자 소광으로 나타나지 않습니다.</b> 기판 피크가 계산되지 않습니다 — 허용 반사(예: ${entry.suggest})로 바꾸세요.`;
+    if (reflectionAbsent(parseHkl($("hkl").value), entry.centering || "P") || entry.basis === "rutile" && rutileReflectionAbsent(parseHkl($("hkl").value))) {
+      warning = `<b class="sw-absent">이 반사는 ${entry.label}의 격자 소광으로 나타나지 않습니다.</b> 해당 Bragg 표시는 생략합니다 — 허용 반사(예: ${entry.suggest})로 바꾸세요.`;
     }
   } catch (error) { /* an unfinished hkl is reported elsewhere */ }
   note.innerHTML = (warning ? warning + "<br>" : "") + parts.join(" · ");
+}
+
+/* ---------- measured-fringe thickness diagnostic ---------- */
+function captureFringeInputs() {
+  return {roi:[$("fringe_min").value, $("fringe_max").value], manual_peaks:$("fringe_manual_peaks").value, manual_orders:$("fringe_manual_orders").value};
+}
+function applyFringeInputs(saved) {
+  invalidateFringes({clearInputs:true});
+  if (!saved || typeof saved !== "object") return;
+  if (Array.isArray(saved.roi) && saved.roi.length === 2) {
+    for (const [index, id] of ["fringe_min", "fringe_max"].entries()) {
+      const value = saved.roi[index];
+      if (typeof value === "string" || typeof value === "number") $(id).value = String(value);
+    }
+  }
+  if (typeof saved.manual_peaks === "string") $("fringe_manual_peaks").value = saved.manual_peaks;
+  if (typeof saved.manual_orders === "string") $("fringe_manual_orders").value = saved.manual_orders;
+}
+function invalidateFringes({clearInputs = false} = {}) {
+  state.fringe = null;
+  state.fringeRequest++;
+  if (clearInputs) for (const id of ["fringe_min", "fringe_max", "fringe_manual_peaks", "fringe_manual_orders"]) $(id).value = "";
+  $("estimateFringes").disabled = false;
+  $("fringeStatus").textContent = "아직 추정하지 않았습니다. 반복 무늬가 보이는 측정 구간을 지정하세요.";
+  $("fringeStatus").classList.remove("error");
+  $("fringeResult").hidden = true;
+  $("fringeWarning").hidden = true;
+}
+function useVisibleFringeRange() {
+  if (!state.measurement) { $("fringeStatus").textContent = "먼저 측정 데이터를 불러오세요."; return; }
+  const low = Math.max(state.view[0], state.measurement.angles[0]);
+  const high = Math.min(state.view[1], state.measurement.angles.at(-1));
+  $("fringe_min").value = trimNumber(low, 6); $("fringe_max").value = trimNumber(high, 6);
+  invalidateFringes();
+}
+function renderFringeComparison() {
+  if (!state.fringe || state.fringe.status !== "ok") return;
+  const t = state.fringe.thickness_nm;
+  let model = null, fitted = false;
+  try {
+    if (state.fitResult && !state.fitResult.stale && Number.isFinite(state.fitResult.thickness_nm)) {
+      model = state.fitResult.thickness_nm; fitted = true;
+    } else {
+      const config = readForm(); model = config.parameters.film_planes * filmRepeatNm(config.parameters);
+    }
+  } catch (error) { /* incomplete model inputs do not erase measured fringes */ }
+  $("fringeModelLabel").textContent = fitted ? "피팅 결과의 두께" : "현재 모델 두께 (환산값)";
+  $("fringeModelThickness").textContent = Number.isFinite(model) ? `${trimNumber(model, 3)} nm` : "—";
+  const difference = Number.isFinite(model) ? Math.abs(model / t - 1) : null;
+  $("fringeDifference").textContent = difference === null ? "—" : `${trimNumber(difference * 100, 2)}%`;
+  $("fringeWarning").hidden = difference === null || difference <= 0.05;
+  if (difference > 0.05) $("fringeWarning").textContent = "두 두께가 5% 넘게 다릅니다. 프린지 선택·차수 배정·피팅 모델을 확인하세요. 이 차이는 통계적 신뢰 구간이 아닙니다.";
+}
+async function estimateFringes() {
+  let body;
+  try {
+    if (!state.measurement) throw new Error("먼저 측정 데이터를 불러오세요.");
+    const low = fitNumber("fringe_min", "프린지 구간 시작"), high = fitNumber("fringe_max", "프린지 구간 끝");
+    if (!(low > 0 && low < high && high < 180)) throw new Error("프린지 구간은 0–180° 안에서 시작보다 끝이 커야 합니다.");
+    if (low < state.measurement.angles[0] || high > state.measurement.angles.at(-1)) throw new Error("프린지 구간을 측정 데이터의 각도 범위 안에 지정하세요.");
+    const wavelength = numericField("wavelength"), offset = numericField("angle_offset_deg");
+    if (!(wavelength > 0) || low - offset <= 0 || high - offset >= 180) throw new Error("프린지 평가의 파장과 영점 보정을 확인하세요.");
+    body = {measurement:state.measurement, wavelength, angle_offset_deg:offset, roi:[low, high]};
+    const manual = $("fringe_manual_peaks").value.trim();
+    if (manual) {
+      const peaks = manual.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (peaks.length < 4 || peaks.some((value, index) => !Number.isFinite(value) || value < low || value > high || index > 0 && value <= peaks[index-1])) throw new Error("수동 프린지는 구간 안의 최대점 각도를 작은 순서로 4개 이상 입력하세요.");
+      body.manual_peaks = peaks;
+    }
+    const manualOrders = $("fringe_manual_orders").value.trim();
+    if (manualOrders) {
+      const orders = manualOrders.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (!body.manual_peaks || orders.length !== body.manual_peaks.length || orders.some((value, index) => !Number.isSafeInteger(value) || Math.abs(value) > 10000 || index > 0 && value <= orders[index-1])) throw new Error("수동 차수는 최대점마다 하나씩, −10,000~10,000 안의 증가하는 정수로 입력하세요. 차수를 건너뛸 수 있습니다.");
+      body.manual_orders = orders;
+    }
+  } catch (error) { $("fringeStatus").textContent = error.message; $("fringeStatus").classList.add("error"); return; }
+  invalidateFringes();
+  const request = state.fringeRequest;
+  $("estimateFringes").disabled = true;
+  $("fringeStatus").textContent = "측정 프린지의 q 간격을 평가하는 중입니다…";
+  try {
+    const result = await getJson("/api/fringes", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    if (request !== state.fringeRequest) return;
+    const hasEvidence = Number.isFinite(result?.q_slope) && result.q_slope > 0 && Number.isFinite(result.relative_scatter)
+      && Array.isArray(result.peak_angles) && result.peak_angles.length >= 4 && result.peak_angles.every(Number.isFinite)
+      && Array.isArray(result.orders) && result.orders.length === result.peak_angles.length && result.orders.every(Number.isSafeInteger)
+      && Number.isFinite(result.angular_residual_rms_deg) && result.angular_residual_rms_deg >= 0
+      && [result.predicted_peak_angles,result.angular_residuals_deg].every(values=>Array.isArray(values) && values.length===result.peak_angles.length && values.every(Number.isFinite));
+    const valid = result?.status === "ok" && Number.isFinite(result.thickness_nm) && result.thickness_nm > 0 && hasEvidence;
+    if (hasEvidence && (valid || result.status === "irregular")) {
+      $("fringeAngleResidual").textContent = `${trimNumber(result.angular_residual_rms_deg, 6)}°`;
+      $("fringeQuality").textContent = `최대점 ${result.peak_angles.length}개 · 차수당 q 간격 ${result.q_slope.toPrecision(5)} Å⁻¹ · 간격 상대 산포 ${trimNumber(result.relative_scatter * 100, 2)}%`;
+      const detail=$("fringePeaks"), table=document.createElement("table");detail.replaceChildren();table.className="peak-table";
+      const header=document.createElement("tr");
+      for(const label of ["차수","측정 2θ (°)","회귀 2θ (°)","각도 잔차 (°)"]){const th=document.createElement("th");th.textContent=label;header.append(th);}table.append(header);
+      for(const [i,value] of result.peak_angles.entries()) {
+        const row=document.createElement("tr");
+        for(const text of [`n=${result.orders[i]}`,value.toFixed(6),result.predicted_peak_angles[i].toFixed(6),result.angular_residuals_deg[i].toFixed(6)]){const td=document.createElement("td");td.textContent=text;row.append(td);}table.append(row);
+      }detail.append(table);
+      $("fringeResult").hidden = false;
+    }
+    if (!valid) {
+      $("fringeThickness").textContent = "추정 불가";
+      $("fringeModelThickness").textContent = "—";
+      $("fringeDifference").textContent = "—";
+      $("fringeStatus").textContent = result?.status === "irregular" ? "추정 불가: 간격 품질 조건을 통과하지 못했습니다. 배정한 차수의 회귀 잔차를 보고 구간·최대점·차수를 검토하세요." : "추정 불가: 신뢰할 수 있는 프린지가 충분하지 않습니다. 반복 무늬가 보이는 구간이나 수동 최대점·차수를 지정하세요.";
+      return;
+    }
+    state.fringe = result;
+    $("fringeStatus").textContent = "선택한 최대점과 차수 배정에 따른 두께입니다. 규칙적인 간격이나 작은 잔차만으로 배정이 증명되지는 않습니다.";
+    $("fringeThickness").textContent = `${trimNumber(result.thickness_nm, 3)} nm`;
+    renderFringeComparison();
+  } catch (error) {
+    if (request === state.fringeRequest) { $("fringeStatus").textContent = "프린지 평가를 완료하지 못했습니다. 측정 데이터, 파장, 영점 보정과 선택 구간을 확인하세요."; $("fringeStatus").classList.add("error"); }
+  } finally { if (request === state.fringeRequest) $("estimateFringes").disabled = false; }
+}
+
+/* ---------- descriptive peak decomposition; independent of physical fit ---------- */
+function capturePeakInputs() {
+  return {roi:[$("peak_min").value, $("peak_max").value], peak_count:Number($("peak_count").value),reference_center:$("peak_reference_center").value,reference_d:$("peak_reference_d").value};
+}
+function applyPeakInputs(saved) {
+  invalidatePeaks({clearInputs:true});
+  if (!saved || typeof saved !== "object") return;
+  if (Array.isArray(saved.roi) && saved.roi.length === 2) for (const [i, id] of ["peak_min", "peak_max"].entries()) {
+    if (["string", "number"].includes(typeof saved.roi[i])) $(id).value = String(saved.roi[i]);
+  }
+  if ([1,2].includes(Number(saved.peak_count))) $("peak_count").value = String(saved.peak_count);
+  for (const [key,id] of [["reference_center","peak_reference_center"],["reference_d","peak_reference_d"]]) if (["string","number"].includes(typeof saved[key])) $(id).value=String(saved[key]);
+}
+function invalidatePeaks({clearInputs=false}={}) {
+  state.peakAnalysis = null; state.peakRequest++;
+  if (clearInputs) { $("peak_min").value = ""; $("peak_max").value = ""; $("peak_count").value = "2"; $("peak_reference_center").value=""; $("peak_reference_d").value=""; }
+  $("fitPeaks").disabled = false;
+  $("peakResult").hidden = true;
+  $("peakStatus").classList.remove("error");
+  $("peakStatus").textContent = "아직 분석하지 않았습니다. 피크가 포함된 측정 구간을 지정하세요.";
+}
+function useVisiblePeakRange() {
+  if (!state.measurement) { $("peakStatus").textContent = "먼저 측정 데이터를 불러오세요."; return; }
+  const low = Math.max(state.view[0], state.measurement.angles[0]), high = Math.min(state.view[1], state.measurement.angles.at(-1));
+  if (!(low < high)) return;
+  $("peak_min").value = trimNumber(low, 6); $("peak_max").value = trimNumber(high, 6); invalidatePeaks();
+}
+function drawPeakAnalysis(result, linearResult) {
+  const svg = $("peakPlot"), ns = "http://www.w3.org/2000/svg", width = 720, height = 220;
+  svg.replaceChildren(); svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const left = 42, top = 12, right = width-12, bottom = height-32;
+  const x0=result.angles[0], x1=result.angles.at(-1), maximum=Math.max(...result.measured, ...result.predicted, ...linearResult.predicted);
+  const xp=x=>left+(x-x0)/(x1-x0)*(right-left), yp=y=>bottom-(Math.log10(Math.max(y/maximum,1e-4))+4)/4*(bottom-top);
+  const add=(name,attrs,text)=>{const n=document.createElementNS(ns,name);for(const [key,value] of Object.entries(attrs))n.setAttribute(key,String(value));if(text!==undefined)n.textContent=text;svg.append(n);return n;};
+  for(let decade=0;decade<=4;decade++) {
+    const y=top+decade*(bottom-top)/4;
+    add("line",{x1:left,y1:y,x2:right,y2:y,stroke:"#e4ebf2"});
+    add("text",{x:left-6,y:y+4,"text-anchor":"end",class:"peak-axis"},decade===0?"1":`10⁻${decade}`);
+  }
+  for(let i=0;i<=4;i++) { const x=x0+(x1-x0)*i/4;add("text",{x:xp(x),y:bottom+18,"text-anchor":"middle",class:"peak-axis"},x.toFixed(2)); }
+  add("text",{x:(left+right)/2,y:height-2,"text-anchor":"middle",class:"peak-axis"},"2θ (°)");
+  for(const [values,color] of [[result.measured,"#8b99aa"],[result.predicted,"#2563b8"],[linearResult.predicted,"#c87a22"]]) {
+    const path=values.map((v,i)=>`${i?"L":"M"}${xp(result.angles[i]).toFixed(2)},${yp(v).toFixed(2)}`).join(" ");
+    add("path",{d:path,fill:"none",stroke:color,"stroke-width":1.5});
+  }
+}
+async function analyzePeaks() {
+  let body;
+  try {
+    if (!state.measurement) throw new Error("먼저 측정 데이터를 불러오세요.");
+    const lo=fitNumber("peak_min", "피크 분석 구간 시작"), hi=fitNumber("peak_max", "피크 분석 구간 끝");
+    if (!(state.measurement.angles[0]<=lo && lo<hi && hi<=state.measurement.angles.at(-1))) throw new Error("피크 분석 구간을 측정 범위 안에서 증가하는 각도로 지정하세요.");
+    const wavelength=numericField("wavelength"), angle_offset_deg=numericField("angle_offset_deg");
+    if (!(wavelength>0) || lo-angle_offset_deg<=0 || hi-angle_offset_deg>=180) throw new Error("피크 분석의 파장과 영점 보정을 확인하세요.");
+    body={measurement:state.measurement,wavelength,angle_offset_deg,roi:[lo,hi],hkl:normaliseHkl($("hkl").value),peak_count:Number($("peak_count").value),max_evaluations:2000};
+    if ($("peak_reference_center").value.trim() || $("peak_reference_d").value.trim()) {
+      const center_deg=fitNumber("peak_reference_center","기준 피크 중심"), d_angstrom=fitNumber("peak_reference_d","기준 d");
+      if (!(center_deg-angle_offset_deg>0 && center_deg-angle_offset_deg<180 && d_angstrom>0)) throw new Error("기준 피크 각도와 양의 기준 d를 함께 확인하세요.");
+      body.reference={center_deg,d_angstrom};
+    }
+  } catch(error) { $("peakStatus").textContent=error.message;$("peakStatus").classList.add("error");return; }
+  invalidatePeaks();const request=state.peakRequest;$("fitPeaks").disabled=true;
+  $("peakStatus").textContent="선택 구간의 피크 모양을 분해하는 중입니다…";
+  try {
+    const results=[];
+    for(const loss of ["soft_log","linear"]) {
+      const result=await getJson("/api/peaks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,loss})});
+      if(request!==state.peakRequest)return;
+      if(!result || !Array.isArray(result.components) || result.components.length!==body.peak_count || !result.components.every(c=>[c.center_deg,c.fwhm_deg,c.area,c.area_fraction,c.roi_area_fraction,c.eta,c.d_angstrom].every(Number.isFinite)) || !Array.isArray(result.angles) || result.angles.length<3 || !Array.isArray(result.measured) || !Array.isArray(result.predicted) || result.measured.length!==result.angles.length || result.predicted.length!==result.angles.length || ![...result.angles,...result.measured,...result.predicted,result.soft_log_rmse,result.log_rmse,result.fit_rmse,result.evaluations].every(Number.isFinite)) throw new Error("Invalid peak analysis response");
+      results.push(result);
+      if(loss==="soft_log")$("peakStatus").textContent="같은 구간을 선형 오차로 분석해 방법 차이를 비교하는 중입니다…";
+    }
+    const [soft,linear]=results;state.peakAnalysis={soft_log:soft,linear};
+    const tbody=$("peakComponents"), comparison=$("peakComparison");tbody.replaceChildren();comparison.replaceChildren();
+    $("peakReferenceDHeader").hidden=!body.reference;$("peakReferenceCHeader").hidden=!body.reference;
+    const appendRow=(target,values)=>{const row=document.createElement("tr");for(const value of values){const cell=document.createElement("td");cell.textContent=String(value);row.append(cell);}target.append(row);};
+    const methodDifferences=[];
+    for(let i=0;i<body.peak_count;i++) {
+      const a=soft.components[i],b=linear.components[i],difference=Math.abs(a.center_deg-b.center_deg);methodDifferences.push(difference);
+      const weak=Math.min(a.area_fraction,b.area_fraction)<.15;
+      appendRow(comparison,[i+1,a.center_deg.toFixed(5),b.center_deg.toFixed(5),difference.toFixed(5),Number.isFinite(a.c_00l_angstrom)?a.c_00l_angstrom.toFixed(5):"—",Number.isFinite(b.c_00l_angstrom)?b.c_00l_angstrom.toFixed(5):"—",`${trimNumber(a.area_fraction*100,2)}%`,`${trimNumber(b.area_fraction*100,2)}%`,weak?"약하게 결정된 성분 (가정한 프로파일)":"프로파일 성분"]);
+    }
+    for(const [method,result] of [["soft-log",soft],["linear",linear]])for(const [i,c] of result.components.entries()) {
+      const values=[method,i+1,c.center_deg.toFixed(5),c.d_angstrom.toFixed(5),Number.isFinite(c.c_00l_angstrom)?c.c_00l_angstrom.toFixed(5):"—",c.fwhm_deg.toFixed(5),c.area.toPrecision(5),`${trimNumber(c.area_fraction*100,2)}%`,`${trimNumber(c.roi_area_fraction*100,2)}%`,trimNumber(c.eta,3)];
+      if(body.reference)values.push(Number.isFinite(c.d_reference_angstrom)?c.d_reference_angstrom.toFixed(5):"—",Number.isFinite(c.c_00l_reference_angstrom)?c.c_00l_reference_angstrom.toFixed(5):"—");
+      appendRow(tbody,values);
+    }
+    $("peakMetrics").textContent=`soft-log 목적함수 RMSE ${soft.fit_rmse.toFixed(4)} · 선형 목적함수 RMSE ${linear.fit_rmse.toFixed(4)} · ${soft.evaluations.toLocaleString("ko-KR")} + ${linear.evaluations.toLocaleString("ko-KR")}회 평가 (서로 다른 오차 정의)`;
+    const warning=[];
+    if(methodDifferences.some(value=>value>.02))warning.push("방법 간 중심 차이가 0.02°를 넘습니다. 피크 위치가 목적함수 선택에 민감합니다.");
+    if(results.some(result=>result.boundary_hits?.length))warning.push("일부 값이 탐색 경계에 닿았습니다. 구간·초기값에 따른 변화를 확인하세요.");
+    if(results.some(result=>result.multistart?.materially_different))warning.push("비슷한 오차를 가진 다른 성분 분해가 있습니다. 이 배정은 유일하지 않습니다.");
+    if(results.some(result=>result.components.some(c=>c.area_fraction<.15)))warning.push("작은 성분은 약하게 결정된 프로파일 특징입니다. 프린지 중첩이나 다른 분해 가능성을 함께 검토하세요.");
+    if(results.some(result=>result.components.some(c=>c.roi_area<.8*c.area)))warning.push("성분 면적의 20% 넘게 선택 구간 밖으로 외삽됩니다. 전체 면적 비율과 구간 면적 비율을 함께 확인하세요.");
+    $("peakWarnings").textContent=warning.join(" ");$("peakWarnings").hidden=!warning.length;
+    $("peakStatus").textContent="피크 모양 분해 결과입니다. 성분의 공간 배치·층 구조·상 배정은 이 결과로 결정되지 않습니다.";
+    $("peakResult").hidden=false;drawPeakAnalysis(soft,linear);
+  } catch(error) {
+    if(request===state.peakRequest){$("peakStatus").textContent="피크 분석을 완료하지 못했습니다. 측정 데이터와 선택 구간, 파장·영점 보정을 확인하세요.";$("peakStatus").classList.add("error");}
+  } finally {if(request===state.peakRequest)$("fitPeaks").disabled=false;}
 }
 
 function captureFitSettings() {
@@ -419,6 +736,7 @@ function captureFitSettings() {
 function applyFitSettings(settings) {
   // A legacy session must not inherit newly enabled fit variables from this tab.
   for (const key of optionalFitKeys) $("fit_enable_" + key).checked = false;
+  if (!settings?.variables?.film_lattice_c) $("fit_enable_film_lattice_c").checked = filmAxisMode() === "00l";
   if (!settings || typeof settings !== "object") {
     refreshFitControls();
     return false;
@@ -439,7 +757,7 @@ function applyFitSettings(settings) {
       if (typeof item.enabled === "boolean") $("fit_enable_" + key).checked = item.enabled;
       const oldCountBounds = key === "film_planes" && settings.thickness_unit !== "nm";
       if (oldCountBounds) migratedThicknessBounds = true;
-      const repeat = oldCountBounds ? projectedRepeatNm(Number($("film_lattice_a").value), $("hkl").value) : 1;
+      const repeat = oldCountBounds ? filmRepeatNm(filmFormGeometry()) : 1;
       if (item.low !== null && item.low !== undefined) $("fit_low_" + key).value = oldCountBounds ? String(Number(item.low) * repeat) : String(item.low);
       if (item.high !== null && item.high !== undefined) $("fit_high_" + key).value = oldCountBounds ? String(Number(item.high) * repeat) : String(item.high);
     }
@@ -451,6 +769,12 @@ function applyFitSettings(settings) {
 }
 
 function refreshFitControls() {
+  const mode = filmAxisMode();
+  for (const [key, inactive] of [["film_lattice_a", mode === "00l"], ["film_lattice_c", mode === "cubic" || mode === "hk0"]]) {
+    const box = $("fit_enable_" + key);
+    if (inactive) box.checked = false;
+    box.disabled = inactive || state.fitBusy;
+  }
   if ($("fit_enable_film_interface_width").checked) $("advancedFitVariables").open = true;
   for (const key of fitKeys) {
     const row = document.querySelector(`[data-fit-key="${key}"]`);
@@ -471,9 +795,10 @@ function validateFitBounds(key, low, high, scan) {
   if (!(low < high)) throw new Error(`${name} 하한은 상한보다 작아야 합니다.`);
   if (key === "substrate_planes" && (!Number.isInteger(low) || !Number.isInteger(high) || low < 1 || high > substrateFitMax)) throw new Error(`${name} 경계는 1~${substrateFitMax.toLocaleString("ko-KR")}의 정수로 입력하세요.`);
   if (key === "film_planes" && low <= 0) throw new Error("Thickness 경계는 0 nm 초과로 입력하세요.");
-  if (key === "film_lattice_a" && (low <= 0 || high > 20)) throw new Error("박막 격자상수 경계는 0 초과 20 Å 이하로 입력하세요.");
-  if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("박막 수직 격자 구배 Δa 경계는 −0.20~+0.20 Å 안에 있어야 합니다.");
+  if (["film_lattice_a", "film_lattice_c"].includes(key) && (low <= 0 || high > 20)) throw new Error("박막 격자상수 경계는 0 초과 20 Å 이하로 입력하세요.");
+  if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("박막 수직 격자 구배 경계는 −0.20~+0.20 Å 안에 있어야 합니다.");
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("영점 보정 경계는 ±5° 이내이며 계산 각도가 0–180°를 벗어나지 않아야 합니다.");
+  if (key === "film_intensity_scale" && (low < 0 || high > 100)) throw new Error("박막 상대 강도 배율 경계는 0~100으로 입력하세요.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("기구 폭 경계는 0~2°로 입력하세요.");
   if (key === "resolution_halo_fraction" && (low < 0 || high > 0.2)) throw new Error("넓은 분해능 성분 비율 f 경계는 0~0.2로 입력하세요.");
   if (key === "resolution_halo_width" && (low < 1 || high > 20)) throw new Error("넓은 분해능 성분 폭 배수 m 경계는 1~20으로 입력하세요.");
@@ -504,10 +829,13 @@ function readFitSettings(config) {
     else bounds[key] = [lower, upper];
   }
   if (thicknessBoundsNm) {
-    const factor = projectedRepeatNm(1, config.parameters.hkl);
-    const aBounds = bounds.film_lattice_a || [config.parameters.film_lattice_a, config.parameters.film_lattice_a];
-    const nLow = Math.max(1, Math.ceil(thicknessBoundsNm[0] / (aBounds[1] * factor) - 1e-7));
-    const nHigh = Math.min(20000, Math.floor(thicknessBoundsNm[1] / (aBounds[0] * factor) + 1e-7));
+    const p = config.parameters;
+    const aBounds = bounds.film_lattice_a || [p.film_lattice_a, p.film_lattice_a];
+    const cBounds = bounds.film_lattice_c || [p.film_lattice_c, p.film_lattice_c];
+    const lowRepeat = filmRepeatNm({...p, film_lattice_a:aBounds[0], film_lattice_c:cBounds[0]});
+    const highRepeat = filmRepeatNm({...p, film_lattice_a:aBounds[1], film_lattice_c:cBounds[1]});
+    const nLow = Math.max(1, Math.ceil(thicknessBoundsNm[0] / highRepeat - 1e-7));
+    const nHigh = Math.min(20000, Math.floor(thicknessBoundsNm[1] / lowRepeat + 1e-7));
     if (!(nLow < nHigh)) throw new Error("Thickness 경계에 들어오는 반복 단위가 2개 이상 필요합니다. 두께 경계를 넓히세요.");
     bounds.film_planes = [nLow, nHigh];
   }
@@ -520,7 +848,7 @@ function readFitSettings(config) {
 function projectFitStart(config, fit) {
   const parameters = {...config.parameters}, adjusted = [];
   for (const [key, [low, high]] of Object.entries(fit.bounds)) {
-    const original = parameters[key];
+    const original = key === "film_lattice_c" ? parameters[key] || parameters.film_lattice_a : parameters[key];
     parameters[key] = Math.max(low, Math.min(high, original));
     if (parameters[key] !== original) adjusted.push(`${key === "film_planes" ? "Thickness 환산 N" : labelFor(key)} ${trimNumber(original, 5)}→${trimNumber(parameters[key], 5)}`);
   }
@@ -547,6 +875,8 @@ function validateCurve(raw, filename = "측정 데이터") {
 function setMeasurement(raw, {adjustScan = true} = {}) {
   const measurement = validateCurve(raw);
   state.measurement = measurement;
+  invalidatePeaks({clearInputs:true});
+  invalidateFringes({clearInputs:true});
   hideFitResult({clearResidual:true});
   setFitProgress(`피팅 대기 중 · 최대 ${Number($("fit_evaluations").value).toLocaleString("ko-KR")}회 모델 평가`);
   const {angles, intensities, filename} = measurement;
@@ -851,19 +1181,25 @@ function showFitResult(result, fit) {
   $("fitThicknessLabel").textContent = thicknessFitted ? "Thickness (피팅값)" : "Thickness (N 고정·환산값)";
   $("fitPlanesLabel").textContent = thicknessFitted ? "반복 단위 N (피팅)" : "반복 단위 N (고정)";
   $("fitThickness").textContent = `${result.thickness_nm.toFixed(2)} nm`;
-  $("fitLattice").textContent = `${result.config.parameters.film_lattice_a.toFixed(5)} Å`;
-  const meanA = result.config.parameters.film_lattice_a, gradientA = result.config.parameters.film_lattice_gradient_a;
-  $("fitGradientLabel").textContent = fit.bounds?.film_lattice_gradient_a ? "박막 수직 격자 구배 Δa (피팅)" : "박막 수직 격자 구배 Δa (고정)";
+  const resultParams = result.config.parameters, activeC = filmAxisMode(resultParams) === "00l";
+  $("fitLatticeLabel").textContent = activeC ? "박막 평균 c" : "박막 평균 a";
+  $("fitLattice").textContent = `${filmActiveMean(resultParams).toFixed(5)} Å`;
+  $("fitOtherLatticeField").hidden = resultParams.film_system !== "tetragonal";
+  $("fitOtherLatticeLabel").textContent = activeC ? "박막 a (고정)" : "박막 c";
+  $("fitOtherLattice").textContent = `${(activeC ? resultParams.film_lattice_a : resultParams.film_lattice_c || resultParams.film_lattice_a).toFixed(5)} Å`;
+  const meanA = filmActiveMean(result.config.parameters), gradientA = result.config.parameters.film_lattice_gradient_a;
+  $("fitGradientLabel").textContent = filmGradientLabel(resultParams) + (fit.bounds?.film_lattice_gradient_a ? " (피팅)" : " (고정)");
   $("fitGradient").textContent = `${gradientA > 0 ? "+" : ""}${gradientA.toFixed(5)} Å`;
   $("fitGradientEndpoints").textContent = `계면 ${((meanA - gradientA / 2)).toFixed(5)} → 표면 ${((meanA + gradientA / 2)).toFixed(5)} Å`;
   $("fitPlanes").textContent = `${result.config.parameters.film_planes}`;
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° 고정`;
-  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "반복 단위"], ["film_thickness_sigma", "fitThicknessSigma", "반복 단위"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "반복 단위"], ["film_thickness_sigma", "fitThicknessSigma", "반복 단위"], ["film_intensity_scale", "fitFilmScale", "×"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
     const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "피팅" : "고정";
     $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
   }
+  renderFringeComparison();
   $("fitLpMode").textContent = Array.from($("lp_mode").options).find(option => option.value === result.config.parameters.lp_mode)?.textContent || "—";
   $("fitPeakFwhm").textContent = result.measured_peak_fwhm_deg === null || result.fitted_peak_fwhm_deg === null ? "측정 불가" : `${result.measured_peak_fwhm_deg.toFixed(4)} → ${result.fitted_peak_fwhm_deg.toFixed(4)}°`;
   $("fitError").textContent = `${result.initial_log_rmse === null ? "—" : result.initial_log_rmse.toFixed(3)} → ${result.best_log_rmse.toFixed(3)}`;
@@ -880,6 +1216,9 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"상한"});
   }
   const warnings = [];
+  if (filmAxisMode(resultParams) === "mixed" && fit.bounds?.film_lattice_a && fit.bounds?.film_lattice_c) warnings.push("단일 혼합 반사는 a와 c의 조합만 제한합니다. 두 축의 피팅값을 독립적인 격자 측정으로 해석하지 마세요.");
+  if (resultParams.film_intensity_scale === 0) warnings.push("박막 상대 강도 배율이 0이므로 박막 산란이 없습니다. 이 조건에서 박막 격자·두께·구배를 결정할 수 없습니다.");
+  if (fit.bounds?.film_intensity_scale && resultParams.substrate_planes === 0) warnings.push("기판 산란이 없으면 양의 박막 강도 배율은 정규화로 상쇄됩니다. 상대 배경을 넣어도 이 배율은 결정되지 않습니다.");
   const haloFraction = result.config.parameters.resolution_halo_fraction;
   const haloWidth = result.config.parameters.resolution_halo_width;
   if (haloFraction === 0 && fit.bounds?.resolution_halo_width) warnings.push("넓은 분해능 성분 비율 f가 0이므로 폭 배수 m은 결정되지 않습니다. 이 조건의 m 피팅값을 해석하지 마세요.");
@@ -889,7 +1228,7 @@ function showFitResult(result, fit) {
   if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("상대 배경이 0이므로 로그 배경 기울기는 계산에 영향을 주지 않습니다. 이 조건에서 기울기 피팅값을 해석하지 마세요.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");
   if (!filmCountHit && fit.thickness_bounds_nm) {
-    const repeatNm = projectedRepeatNm(result.config.parameters.film_lattice_a, result.config.parameters.hkl);
+    const repeatNm = filmRepeatNm(result.config.parameters);
     const smallestN = Math.ceil(fit.thickness_bounds_nm[0] / repeatNm - 1e-7);
     const largestN = Math.floor(fit.thickness_bounds_nm[1] / repeatNm + 1e-7);
     if (result.config.parameters.film_planes <= smallestN) filmCountHit = {key:"film_planes", side:"하한"};
@@ -900,10 +1239,10 @@ function showFitResult(result, fit) {
   if (gradientHit) {
     const selectedEdge = gradientHit.side === "하한" ? fit.bounds.film_lattice_gradient_a[0] : fit.bounds.film_lattice_gradient_a[1];
     const limitAdvice = Math.abs(selectedEdge) >= .2 - 1e-9 ? "현재 GUI 허용 범위의 끝입니다." : "필요하면 ±0.20 Å 안에서 경계를 넓혀 다시 확인하세요.";
-    warnings.push(`박막 수직 격자 구배 Δa가 선택한 ${gradientHit.side} ${selectedEdge.toFixed(3)} Å에 도달했습니다. ${limitAdvice} 모델 구배를 독립적으로 측정한 strain으로 해석하지 마세요.`);
+    warnings.push(`${filmGradientLabel(resultParams)}가 선택한 ${gradientHit.side} ${selectedEdge.toFixed(3)} Å에 도달했습니다. ${limitAdvice} 모델 구배를 독립적으로 측정한 strain으로 해석하지 마세요.`);
   }
   const largeGradient = Math.abs(gradientA) / meanA > .01;
-  if (largeGradient) warnings.push(`박막 수직 격자 구배 |Δa|/평균 a가 ${(Math.abs(gradientA) / meanA * 100).toFixed(2)}%입니다. 이 값은 모델의 유효 법선 간격 변화이며 독립적으로 확인된 strain이 아닙니다. 다른 구배·두께·기구 폭 가정도 비교하세요.`);
+  if (largeGradient) warnings.push(`박막 수직 격자 구배의 상대 변화가 ${(Math.abs(gradientA) / meanA * 100).toFixed(2)}%입니다. 이 값은 모델의 유효 법선 간격 변화이며 독립적으로 확인된 strain이 아닙니다. 다른 구배·두께·기구 폭 가정도 비교하세요.`);
   const fwhmHit = boundaryHits.find((item) => item.key === "fwhm_deg");
   if (fwhmHit) warnings.push(`기구 Gaussian FWHM이 ${fwhmHit.side}에 도달했습니다. 측정·모델 피크 위치와 선택한 반사 배정을 확인하세요. FWHM은 피크 위치 오차를 보정하지 않습니다.`);
   if (fit.bounds?.fwhm_deg && result.measured_peak_fwhm_deg !== null && result.fitted_peak_fwhm_deg !== null && Math.abs(result.fitted_peak_fwhm_deg - result.measured_peak_fwhm_deg) / result.measured_peak_fwhm_deg > .25) warnings.push(`계산 피크 반치폭 ${result.fitted_peak_fwhm_deg.toFixed(4)}°가 측정 ${result.measured_peak_fwhm_deg.toFixed(4)}°와 25% 이상 다릅니다. 피크 구간·기구 폭 경계·모델 가정을 확인하세요.`);
@@ -1318,10 +1657,9 @@ function observedPeakIn(lo, hi) {
   return found.index >= 0 ? state.measurement.angles[found.index] : null;
 }
 
-function braggAngle(a, hkl, wavelength) {
-  const values = hkl.split("").map(Number), magnitude = Math.hypot(...values);
-  const sine = wavelength * magnitude / (2 * a);
-  if (sine <= 0 || sine > 1) throw new Error("선택한 반사면이 파장과 격자상수에서 접근 불가능합니다.");
+function braggAngle(a, hkl, wavelength, c = 0, system = "cubic") {
+  const sine = wavelength / (2 * latticeD(a, hkl, c, system));
+  if (!Number.isFinite(sine) || sine <= 0 || sine > 1) throw new Error("선택한 반사면이 파장과 격자상수에서 접근 불가능합니다.");
   return 2 * Math.asin(sine) * 180 / Math.PI;
 }
 
@@ -1332,10 +1670,13 @@ async function alignObservedAsSto() {
   const observed = observedPeakIn(config.scan.xmin, config.scan.xmax);
   if (observed === null) { setStatus("정렬할 측정 피크가 현재 계산 범위에 없습니다.", true); return; }
   try {
-    const expected = braggAngle(config.parameters.substrate_lattice_a, config.parameters.hkl, config.parameters.wavelength);
+    const p = config.parameters, entry = substrates.get(p.substrate_material), indices = parseHkl(p.hkl);
+    if (reflectionAbsent(indices, entry?.centering || "P") || entry?.basis === "rutile" && rutileReflectionAbsent(indices)) throw new Error("선택한 기판 반사는 계통 소멸 조건이므로 정렬 기준으로 사용할 수 없습니다.");
+    const expected = braggAngle(p.substrate_lattice_a, p.hkl, p.wavelength, p.substrate_lattice_c, entry?.system || "cubic");
     const offset = observed - expected;
     if (Math.abs(offset) > 5) throw new Error("필요한 보정값이 ±5°를 넘습니다. 반사면과 파장을 확인하세요.");
     $("angle_offset_deg").value = offset.toFixed(5);
+    invalidateFringes(); invalidatePeaks();
     markCurveStale();
     markFitResultStale();
     if (await runSimulation()) setStatus(`측정 주 피크 ${observed.toFixed(3)}°를 기판 ${config.parameters.hkl}로 가정해 영점 보정 ${offset >= 0 ? "+" : ""}${offset.toFixed(3)}°를 적용했습니다. 반사 배정은 직접 확인하세요.`);
@@ -1361,6 +1702,8 @@ async function saveProject() {
     const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "측정 데이터 없음"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
     project.fit_settings = captureFitSettings();
+    project.fringe_settings = captureFringeInputs();
+    project.peak_settings = capturePeakInputs();
     if (state.fitResult && !state.fitResult.stale) project.fit_result = state.fitResult;
     downloadText("xrd_studio_project.json", JSON.stringify(project, null, 2), "application/json;charset=utf-8");
     setStatus("설정, 피팅 범위와 측정 원본 데이터를 JSON 파일로 저장했습니다.");
@@ -1377,7 +1720,9 @@ async function loadProject(file) {
     if (project.measurement) measurement = validateCurve({...project.measurement, filename:project.measurement_name || "저장된 측정 데이터"});
     applyConfig(config);
     if (measurement) setMeasurement(measurement, {adjustScan:false});
-    else {state.measurement = null; $("dataName").textContent = "측정 데이터 없음"; $("dataMeta").textContent = "2θ(°), 강도 · 2열 파일";}
+    else {state.measurement = null; invalidateFringes({clearInputs:true}); $("dataName").textContent = "측정 데이터 없음"; $("dataMeta").textContent = "2θ(°), 강도 · 2열 파일";}
+    applyFringeInputs(project.fringe_settings);
+    applyPeakInputs(project.peak_settings);
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
       if (measurement && project.fit_result && project.model_revision !== modelRevision) {
@@ -1430,12 +1775,23 @@ function bindEvents() {
     if (!event.target.matches("input, select")) return;
     markFitResultStale();
     if (modelInputIds.has(event.target.id)) markCurveStale();
+    if (["wavelength", "angle_offset_deg", "hkl", "film_material", "substrate_material"].includes(event.target.id)) invalidatePeaks();
+    if (["wavelength", "angle_offset_deg"].includes(event.target.id)) invalidateFringes();
+    else renderFringeComparison();
     if (event.target.id === "fit_min" || event.target.id === "fit_max") renderResidualDiagnostics();
   });
   $("film_thickness_nm").addEventListener("input", updateThicknessConversion);
   for (const eventName of ["change", "blur"]) $("film_thickness_nm").addEventListener(eventName, () => { try { snapThicknessToModel(); } catch (error) { setStatus(error.message, true); } });
-  for (const id of ["film_lattice_a", "hkl"]) $(id).addEventListener("input", syncThicknessForLatticeChange);
-  for (const id of ["fit_low_film_planes", "fit_high_film_planes", "fit_low_film_lattice_a", "fit_high_film_lattice_a"]) $(id).addEventListener("input", updateThicknessConversion);
+  for (const id of ["film_lattice_a", "film_lattice_c", "hkl"]) $(id).addEventListener("input", () => { refreshFilmControls(); refreshSubstrateNote(); syncThicknessForLatticeChange(); });
+  $("film_material").addEventListener("change", onFilmChange);
+  for (const id of ["film_system", "film_basis"]) $(id).addEventListener("change", () => { refreshFilmControls(); syncThicknessForLatticeChange(); });
+  for (const id of ["fit_low_film_planes", "fit_high_film_planes", "fit_low_film_lattice_a", "fit_high_film_lattice_a", "fit_low_film_lattice_c", "fit_high_film_lattice_c"]) $(id).addEventListener("input", updateThicknessConversion);
+  $("fitPeaks").addEventListener("click", analyzePeaks);
+  $("peakUseVisible").addEventListener("click", useVisiblePeakRange);
+  for (const id of ["peak_min", "peak_max", "peak_count", "peak_reference_center", "peak_reference_d"]) $(id).addEventListener("input", () => invalidatePeaks());
+  $("estimateFringes").addEventListener("click", estimateFringes);
+  $("fringeUseVisible").addEventListener("click", useVisibleFringeRange);
+  for (const id of ["fringe_min", "fringe_max", "fringe_manual_peaks", "fringe_manual_orders"]) $(id).addEventListener("input", () => invalidateFringes());
   $("runFit").addEventListener("click", runFit);
   $("cancelFit").addEventListener("click", cancelFit);
   $("useVisibleRange").addEventListener("click", useVisibleRange);

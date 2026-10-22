@@ -2,8 +2,8 @@
 
 const $ = (id) => document.getElementById(id);
 // Saved fit scores are only valid for the numerical model that produced them.
-const modelRevision = "gaussian-10sigma-v1";
-const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3"]);
+const modelRevision = "rutile-fringe-v1";
+const materials = new Set(["SrRuO3", "SrTiO3", "BaTiO3", "LaAlO3", "LaMnO3", "LaNiO3", "SrVO3", "VO2", "TiO2"]);
 /* Any hkl may be typed: "110", "1 1 0", "(1,1,0)", or "0 0 6" for a hexagonal
    substrate. Four-index hexagonal input (hkil) drops the redundant third index. */
 const maxMillerIndex = 30;
@@ -30,18 +30,25 @@ function parseHkl(text) {
 }
 const hklText = (values) => values.every(v => v >= 0 && v < 10) ? values.join("") : values.join(" ");
 const normaliseHkl = (text) => hklText(parseHkl(text));
-const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
-const optionalModelDefaults = {film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
+const numericParameters = ["wavelength", "film_lattice_a", "film_lattice_c", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "substrate_lattice_a", "substrate_lattice_c", "substrate_planes", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "background", "background_slope"];
+const optionalModelDefaults = {film_intensity_scale:1,film_lattice_c:0,film_lattice_gradient_a:0, substrate_lattice_c:0, film_interface_width:0, film_thickness_sigma:0, background_slope:0, resolution_halo_fraction:0, resolution_halo_width:3};
 const lpModes = new Set(["none", "synchrotron_vertical", "synchrotron_horizontal", "lab_unpolarized", "synchrotron_vertical_footprint", "synchrotron_horizontal_footprint", "lab_unpolarized_footprint"]);
 const numericScan = ["xmin", "xmax", "step"];
-const fitKeys = ["film_lattice_a", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
-const optionalFitKeys = new Set(["film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
+const fitKeys = ["film_lattice_a", "film_lattice_c", "film_lattice_gradient_a", "film_planes", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "angle_offset_deg", "fwhm_deg", "resolution_halo_fraction", "resolution_halo_width", "substrate_planes", "background", "background_slope"];
+const optionalFitKeys = new Set(["film_lattice_c", "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "film_intensity_scale", "background_slope", "resolution_halo_fraction", "resolution_halo_width"]);
 const fitIntegerKeys = new Set(["film_planes", "substrate_planes"]);
-const fitBudgetOptions = new Set([400, 800, 1200]);
+const fitBudgetOptions = new Set([400, 800, 1200, 3000, 6000]);
 const substrateFitMax = 30000;
-const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "lp_mode"]);
+const modelInputIds = new Set([...numericParameters, ...numericScan, "film_thickness_nm", "hkl", "film_material", "substrate_material", "film_system", "film_basis", "lp_mode"]);
 /* Filled from /api/catalogue at start-up: the substrate list the server knows. */
 const substrates = new Map();
+const films = new Map([
+  ["VO2", {id:"VO2", label:"VO₂ (rutile R)", system:"tetragonal", basis:"rutile", a:4.5546, c:2.8514}],
+  ["TiO2", {id:"TiO2", label:"TiO₂ (rutile)", system:"tetragonal", basis:"rutile", a:4.5937, c:2.9587}]
+]);
+function filmMetadata(material) {
+  return films.get(material) || {system:"cubic", basis:"perovskite"};
+}
 const state = {
   measurement: null,
   simulation: null,
@@ -60,7 +67,12 @@ const state = {
   fitBusy: false,
   fitResult: null,
   residual: null,
-  lastFilmPlanes: 60
+  lastFilmPlanes: 60,
+  filmFitMode: null,
+  fringe: null,
+  fringeRequest: 0,
+  peakAnalysis: null,
+  peakRequest: 0
 };
 
 function setStatus(message, error = false) {
@@ -84,6 +96,7 @@ function setFitBusy(busy) {
   // the one control that has to stay alive while everything else is locked
   const cancel = $("cancelFit");
   if (cancel) { cancel.hidden = !busy; cancel.disabled = false; }
+  if (!busy) refreshFitControls();
 }
 
 /* A fit runs for about a minute in one blocking request, so the page asks the
@@ -133,6 +146,7 @@ function hideFitResult({clearResidual = false} = {}) {
     state.residual = null;
     $("residualCard").hidden = true;
   }
+  renderFringeComparison();
 }
 
 function markFitResultStale() {
@@ -142,6 +156,7 @@ function markFitResultStale() {
   $("fitStale").hidden = false;
   $("fitResult").querySelector(".eyebrow").textContent = "PREVIOUS FIT";
   $("fit-result-title").textContent = "Previous fit · needs refitting";
+  renderFringeComparison();
 }
 
 function markCurveStale() {
@@ -177,71 +192,96 @@ function numericField(id) {
 }
 
 function labelFor(id) {
-  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",film_interface_width:"Film boundary taper width w",film_thickness_sigma:"Film thickness spread σN",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",resolution_halo_fraction:"Broad resolution component fraction f",resolution_halo_width:"Broad resolution component width multiplier m",background:"Relative background",background_slope:"Log background slope",lp_mode:"Polarization / illuminated length",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
+  if (id === "film_lattice_gradient_a") return filmGradientLabel();
+  return ({wavelength:"Wavelength",film_lattice_a:"Film mean lattice constant a",film_lattice_c:"Film mean lattice constant c",film_lattice_gradient_a:"Film out-of-plane lattice gradient Δa",film_interface_width:"Film boundary taper width w",film_thickness_sigma:"Film thickness spread σN",film_intensity_scale:"Film relative intensity scale",substrate_lattice_a:"Substrate lattice constant",substrate_lattice_c:"Substrate c axis",film_planes:"Thickness",film_thickness_nm:"Thickness",substrate_planes:"Substrate coherent repeats",angle_offset_deg:"2θ zero offset",fwhm_deg:"Instrumental Gaussian FWHM",resolution_halo_fraction:"Broad resolution component fraction f",resolution_halo_width:"Broad resolution component width multiplier m",background:"Relative background",background_slope:"Log background slope",lp_mode:"Polarization / illuminated length",xmin:"2θ start",xmax:"2θ end",step:"Calculation step"})[id] || id;
 }
 
 function gcd3(h, k, l) {
   const gcd = (x, y) => y ? gcd(y, x % y) : x;
   return gcd(gcd(Math.abs(h), Math.abs(k)), Math.abs(l)) || 1;
 }
-function projectedRepeatNm(a, hkl) {
-  // The film is treated as pseudo-cubic, so one repeat along the reflection
-  // normal is d(hkl) times the number of planes that share a basis.
+// Shared by desktop and static UI: no dependency on the browser-only kernel.
+function latticeD(a, hkl, c = 0, system = "cubic") {
   let values;
   try { values = parseHkl(hkl); } catch (error) { return NaN; }
-  const [h, k, l] = values;
-  const factor = gcd3(h, k, l) / Math.sqrt(h*h + k*k + l*l);
-  return a * factor / 10;
+  const [h, k, l] = values, axisC = c || a;
+  if (!(a > 0) || !(axisC > 0)) return NaN;
+  const inverse = system === "hexagonal" ? 4 * (h*h + h*k + k*k) / (3*a*a) + l*l/(axisC*axisC)
+    : system === "tetragonal" ? (h*h + k*k)/(a*a) + l*l/(axisC*axisC)
+    : (h*h + k*k + l*l)/(a*a);
+  return 1 / Math.sqrt(inverse);
+}
+function projectedRepeatNm(a, hkl, c = 0, system = "cubic") {
+  try { return latticeD(a, hkl, c, system) * gcd3(...parseHkl(hkl)) / 10; }
+  catch (error) { return NaN; }
+}
+function filmFormGeometry() {
+  return {film_lattice_a:Number($("film_lattice_a").value), film_lattice_c:Number($("film_lattice_c").value),
+    film_system:$("film_system").value, film_basis:$("film_basis").value, hkl:$("hkl").value};
+}
+function filmRepeatNm(p) { return projectedRepeatNm(p.film_lattice_a, p.hkl, p.film_lattice_c, p.film_system); }
+function filmAxisMode(p = filmFormGeometry()) {
+  if (p.film_system !== "tetragonal") return "cubic";
+  try { const [h,k,l] = parseHkl(p.hkl); return !h && !k ? "00l" : !l ? "hk0" : "mixed"; }
+  catch (error) { return "mixed"; }
+}
+function filmActiveMean(p) { return filmAxisMode(p) === "00l" ? p.film_lattice_c || p.film_lattice_a : p.film_lattice_a; }
+function filmGradientLabel(p = filmFormGeometry()) {
+  return filmAxisMode(p) === "00l" ? "Film out-of-plane lattice gradient Δc" : "Film out-of-plane lattice gradient Δa";
+}
+function rutileReflectionAbsent(values) {
+  const [h,k,l] = values;
+  return (h === 0 && (k+l)%2 !== 0) || (k === 0 && (h+l)%2 !== 0);
 }
 
-function thicknessToPlanes(thicknessNm, a, hkl) {
+function thicknessToPlanes(thicknessNm, a, hkl, c = 0, system = "cubic") {
   if (!Number.isFinite(thicknessNm) || thicknessNm < 0) throw new Error("Thickness must be 0 nm or more.");
-  if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(projectedRepeatNm(a, hkl))) throw new Error("Converting a thickness needs a valid lattice constant and reflection.");
-  const planes = Math.round(thicknessNm / projectedRepeatNm(a, hkl));
+  if (!Number.isFinite(a) || a <= 0 || !Number.isFinite(projectedRepeatNm(a, hkl, c, system))) throw new Error("Converting a thickness needs a valid lattice constant and reflection.");
+  const planes = Math.round(thicknessNm / projectedRepeatNm(a, hkl, c, system));
   if (planes > 20000) throw new Error("That thickness is beyond the model limit of 20,000 repeats.");
   return planes;
 }
 
 function updateThicknessConversion() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value, thickness = Number($("film_thickness_nm").value);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry(), thickness = Number($("film_thickness_nm").value);
   const node = $("filmThicknessQuantization"), boundNote = $("fitThicknessBoundNote");
-  if (!(a > 0) || !Number.isFinite(projectedRepeatNm(a, hkl)) || !Number.isFinite(thickness) || thickness < 0) {
+  if (!(a > 0) || !Number.isFinite(projectedRepeatNm(a, hkl, c, system)) || !Number.isFinite(thickness) || thickness < 0) {
     node.textContent = "Enter the lattice constant, reflection and thickness.";
     boundNote.textContent = "Enter a lattice constant and reflection to see the repeat count.";
     return;
   }
-  const repeat = projectedRepeatNm(a, hkl), planes = Math.round(thickness / repeat);
+  const repeat = projectedRepeatNm(a, hkl, c, system), planes = Math.round(thickness / repeat);
   state.lastFilmPlanes = planes;
   node.textContent = `model value ${trimNumber(planes * repeat, 4)} nm · N = ${planes.toLocaleString("en")} repeats`;
   const low = Number($("fit_low_film_planes").value), high = Number($("fit_high_film_planes").value);
   if (Number.isFinite(low) && Number.isFinite(high) && low < high) {
     const nLow = Math.ceil(low / repeat - 1e-7), nHigh = Math.floor(high / repeat + 1e-7);
-    boundNote.textContent = `At the current a and hkl, N = ${nLow.toLocaleString("en")}–${nHigh.toLocaleString("en")} · the nm bounds are kept during the fit`;
+    boundNote.textContent = `At the current lattice and hkl, N = ${nLow.toLocaleString("en")}–${nHigh.toLocaleString("en")} · the nm bounds are kept during the fit`;
   } else boundNote.textContent = "Enter thickness bounds to see the repeat-count range.";
 }
 
 function syncThicknessForLatticeChange() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value;
-  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl))) $("film_thickness_nm").value = trimNumber(state.lastFilmPlanes * projectedRepeatNm(a, hkl), 8);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry();
+  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl, c, system))) $("film_thickness_nm").value = trimNumber(state.lastFilmPlanes * projectedRepeatNm(a, hkl, c, system), 8);
   updateThicknessConversion();
 }
 
 function snapThicknessToModel() {
-  const a = Number($("film_lattice_a").value), hkl = $("hkl").value, thickness = Number($("film_thickness_nm").value);
-  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl)) && Number.isFinite(thickness) && thickness >= 0) {
-    const planes = thicknessToPlanes(thickness, a, hkl);
+  const {film_lattice_a:a, film_lattice_c:c, film_system:system, hkl} = filmFormGeometry(), thickness = Number($("film_thickness_nm").value);
+  if (a > 0 && Number.isFinite(projectedRepeatNm(a, hkl, c, system)) && Number.isFinite(thickness) && thickness >= 0) {
+    const planes = thicknessToPlanes(thickness, a, hkl, c, system);
     state.lastFilmPlanes = planes;
-    $("film_thickness_nm").value = trimNumber(planes * projectedRepeatNm(a, hkl), 8);
+    $("film_thickness_nm").value = trimNumber(planes * projectedRepeatNm(a, hkl, c, system), 8);
   }
   updateThicknessConversion();
 }
 
 function readForm() {
   const parameters = {hkl: $("hkl").value, film_material: $("film_material").value,
-                      substrate_material: $("substrate_material").value, lp_mode: $("lp_mode").value};
+                      substrate_material: $("substrate_material").value, film_system:$("film_system").value, film_basis:$("film_basis").value, lp_mode: $("lp_mode").value};
   const scan = {};
   for (const key of numericParameters) parameters[key] = numericField(key);
-  parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl);
+  parameters.film_planes = thicknessToPlanes(numericField("film_thickness_nm"), parameters.film_lattice_a, parameters.hkl, parameters.film_lattice_c, parameters.film_system);
   for (const key of numericScan) scan[key] = numericField(key);
   return validateConfig({parameters, scan});
 }
@@ -251,6 +291,11 @@ function validateConfig(input) {
   const source = input.parameters, scanSource = input.scan;
   const parameters = {hkl: String(source.hkl), film_material: String(source.film_material),
                       substrate_material: String(source.substrate_material ?? "SrTiO3"), lp_mode: String(source.lp_mode ?? "none")};
+  parameters.film_system = source.film_system ?? filmMetadata(parameters.film_material).system;
+  parameters.film_basis = source.film_basis ?? filmMetadata(parameters.film_material).basis;
+  if (!["cubic", "tetragonal"].includes(parameters.film_system)) throw new Error("Choose a cubic or tetragonal film system. M1 is not supported.");
+  if (!["perovskite", "rutile", "lattice"].includes(parameters.film_basis)) throw new Error("Choose a film structure-factor model from the list.");
+  if (parameters.film_basis !== "lattice" && parameters.film_basis !== filmMetadata(parameters.film_material).basis) throw new Error("The selected material and structure-factor model are incompatible.");
   const scan = {};
   parameters.hkl = normaliseHkl(parameters.hkl);
   if (!materials.has(parameters.film_material)) throw new Error("That film material is not supported.");
@@ -271,18 +316,20 @@ function validateConfig(input) {
     scan[key] = Number(scanSource[key]);
     if (!Number.isFinite(scan[key])) throw new Error(`${labelFor(key)} must be a finite number.`);
   }
+  if (parameters.film_lattice_c < 0) throw new Error("Film c must be zero (same as a) or positive.");
   if (parameters.substrate_lattice_c < 0) throw new Error("The substrate c axis must be 0 (same as a) or more.");
   for (const key of ["wavelength", "film_lattice_a", "substrate_lattice_a"]) {
     if (parameters[key] <= 0) throw new Error(`${labelFor(key)} must be greater than zero.`);
   }
-  if (Math.abs(parameters.film_lattice_gradient_a) > 0.2) throw new Error("The film lattice gradient Δa must be within −0.20 to +0.20 Å.");
-  if (parameters.film_lattice_a - Math.abs(parameters.film_lattice_gradient_a) / 2 <= 0) throw new Error("Adjust the mean a and Δa so the lattice spacing stays positive at both the interface and the surface.");
+  if (Math.abs(parameters.film_lattice_gradient_a) > 0.2) throw new Error("Film out-of-plane lattice gradient must be within −0.20 to +0.20 Å.");
+  if (filmActiveMean(parameters) - Math.abs(parameters.film_lattice_gradient_a) / 2 <= 0) throw new Error("Adjust the mean film lattice and gradient so both interface and surface spacings stay positive.");
   for (const key of ["film_planes", "substrate_planes"]) {
     const maximum = key === "substrate_planes" ? substrateFitMax : 20000;
     if (!Number.isInteger(parameters[key]) || parameters[key] < 0 || parameters[key] > maximum) throw new Error(`${labelFor(key)} must be a whole number from 0 to ${maximum.toLocaleString("en")}.`);
   }
-  if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("A film lattice gradient Δa needs at least 2 film repeats.");
+  if (parameters.film_lattice_gradient_a !== 0 && parameters.film_planes < 2) throw new Error("A film out-of-plane lattice gradient requires at least two film repeats N.");
   if (parameters.film_planes === 0 && parameters.substrate_planes === 0) throw new Error("The film or the substrate must have at least one repeat.");
+  if (parameters.film_intensity_scale < 0 || parameters.film_intensity_scale > 100) throw new Error("Film relative intensity scale must be between 0 and 100.");
   if (parameters.fwhm_deg < 0) throw new Error("The instrumental width must be 0 or more.");
   if (parameters.resolution_halo_fraction < 0 || parameters.resolution_halo_fraction > 0.2) throw new Error("Broad resolution component fraction f must be between 0 and 0.2.");
   if (parameters.resolution_halo_width < 1 || parameters.resolution_halo_width > 20) throw new Error("Broad resolution component width multiplier m must be between 1 and 20.");
@@ -301,17 +348,23 @@ function validateConfig(input) {
 }
 
 function applyConfig(config) {
+  config = validateConfig(config);
+  if (Number($("wavelength").value) !== config.parameters.wavelength || Number($("angle_offset_deg").value) !== config.parameters.angle_offset_deg) { invalidateFringes(); invalidatePeaks(); }
+  if ($("hkl").value !== config.parameters.hkl) invalidatePeaks();
   markCurveStale();
   $("hkl").value = config.parameters.hkl;
   $("film_material").value = config.parameters.film_material;
   $("lp_mode").value = config.parameters.lp_mode;
+  $("film_system").value = config.parameters.film_system;
+  $("film_basis").value = config.parameters.film_basis;
   if (config.parameters.substrate_material && substrates.has(config.parameters.substrate_material)) {
     $("substrate_material").value = config.parameters.substrate_material;
   }
   for (const key of numericParameters) $(key).value = String(config.parameters[key]);
   state.lastFilmPlanes = config.parameters.film_planes;
-  $("film_thickness_nm").value = trimNumber(config.parameters.film_planes * projectedRepeatNm(config.parameters.film_lattice_a, config.parameters.hkl), 8);
+  $("film_thickness_nm").value = trimNumber(config.parameters.film_planes * filmRepeatNm(config.parameters), 8);
   for (const key of numericScan) $(key).value = String(config.scan[key]);
+  refreshFilmControls();
   refreshSubstrateNote();
   updateThicknessConversion();
 }
@@ -324,6 +377,15 @@ async function loadCatalogue() {
   let data;
   try { data = await getJson("/api/catalogue"); }
   catch (error) { return; }                       // keep the typed-in values working
+  const filmSelect = $("film_material"), wantedFilm = filmSelect.value;
+  if (data.film_catalogue?.length) {
+    filmSelect.innerHTML = "";
+    for (const entry of data.film_catalogue) {
+      films.set(entry.id, entry); materials.add(entry.id);
+      const option = document.createElement("option"); option.value = entry.id; option.textContent = entry.label; filmSelect.append(option);
+    }
+    filmSelect.value = materials.has(wantedFilm) ? wantedFilm : "SrRuO3";
+  }
   const select = $("substrate_material");
   const wanted = select.value || "SrTiO3";
   select.innerHTML = "";
@@ -335,19 +397,56 @@ async function loadCatalogue() {
     select.append(option);
   }
   select.value = substrates.has(wanted) ? wanted : "SrTiO3";
-  const quick = $("hklQuick");
-  quick.innerHTML = "";
-  for (const label of data.common_hkl || []) {
-    const button = document.createElement("button");
-    button.type = "button"; button.textContent = label;
-    button.addEventListener("click", () => {
-      $("hkl").value = label;
-      $("hkl").dispatchEvent(new Event("input", {bubbles: true}));
-      refreshSubstrateNote();
-    });
+  refreshFilmControls();
+  refreshSubstrateNote();
+}
+
+function refreshHklQuick() {
+  const quick = $("hklQuick"); quick.innerHTML = "";
+  const rutile = $("film_basis").value === "rutile" || substrates.get($("substrate_material").value)?.basis === "rutile";
+  for (const label of rutile ? ["002", "004", "110", "220"] : ["001", "002", "003", "004", "110", "111", "220", "006"]) {
+    const button = document.createElement("button"); button.type = "button"; button.textContent = label;
+    button.addEventListener("click", () => { $("hkl").value = label; $("hkl").dispatchEvent(new Event("input", {bubbles:true})); });
     quick.append(button);
   }
-  refreshSubstrateNote();
+}
+
+function refreshFilmControls({resetFit = false} = {}) {
+  const p = filmFormGeometry(), mode = filmAxisMode(p), tet = p.film_system === "tetragonal";
+  $("filmCField").hidden = !tet;
+  document.querySelector('[data-fit-key="film_lattice_c"]').hidden = !tet;
+  if (resetFit || state.filmFitMode !== mode) {
+    $("fit_enable_film_lattice_a").checked = mode !== "00l";
+    $("fit_enable_film_lattice_c").checked = mode === "00l";
+  }
+  state.filmFitMode = mode;
+  $("filmGradientName").textContent = filmGradientLabel(p);
+  $("fitGradientName").textContent = filmGradientLabel(p);
+  $("filmGradientNote").textContent = mode === "00l"
+    ? "Δc = surface c − interface c. For 00l, only c sets the normal spacing; a cannot be determined. Thickness uses the mean c."
+    : mode === "mixed" ? "Δa = surface a − interface a. For mixed reflections, a and c vary proportionally to describe the normal-spacing gradient. One reflection cannot determine a and c independently, so c is fixed by default."
+    : "Δa = surface a − interface a. The normal spacing is assumed to vary linearly. Thickness uses the mean lattice and hkl.";
+  let note = p.film_basis === "rutile"
+    ? "This uses a rutile atomic structure factor. Lattice and oxygen coordinates are reference presets, not refinements of your sample. VO₂ assumes the R phase; M1 is not supported. A single-reflection fit cannot distinguish M1 from R."
+    : p.film_basis === "lattice" ? "This uses an effective-scatterer lattice model. Relative intensities do not fully represent the atomic structure."
+    : "This uses an ABO₃ atomic structure factor. Check the input lattice and reflection assignment.";
+  try { if (p.film_basis === "rutile" && rutileReflectionAbsent(parseHkl(p.hkl))) note = "This reflection is systematically absent in rutile. The exact Bragg reflection vanishes, but nearby scattering from a finite film can remain. " + note; } catch (error) {}
+  $("filmNote").textContent = note;
+  refreshFitControls(); refreshHklQuick();
+}
+
+function onFilmChange() {
+  const entry = filmMetadata($("film_material").value);
+  $("film_system").value = entry.system; $("film_basis").value = entry.basis;
+  if (["VO2", "TiO2"].includes($("film_material").value)) $("film_lattice_a").value = String(entry.a);
+  $("film_lattice_c").value = entry.system === "tetragonal" ? String(entry.c || entry.a) : "0";
+  if (entry.basis === "rutile") $("hkl").value = "002";
+  for (const axis of ["a", "c"]) {
+    const value = Number($("film_lattice_" + axis).value) || Number($("film_lattice_a").value);
+    $("fit_low_film_lattice_" + axis).value = trimNumber(value * .94, 5);
+    $("fit_high_film_lattice_" + axis).value = trimNumber(value * 1.06, 5);
+  }
+  refreshFilmControls({resetFit:true}); refreshSubstrateNote(); syncThicknessForLatticeChange();
 }
 
 /* Changing the substrate fills in that crystal's numbers; every one of them
@@ -360,7 +459,8 @@ function onSubstrateChange() {
   if (entry.suggest) $("hkl").value = entry.suggest;
   markCurveStale();
   refreshSubstrateNote();
-  updateThicknessConversion();
+  refreshFilmControls();
+  syncThicknessForLatticeChange();
 }
 
 /* Mirrors reflection_absent() in xrd_model.py: lattice centering decides whether
@@ -392,18 +492,235 @@ function refreshSubstrateNote() {
   if (!entry) { note.textContent = ""; if (cField) cField.hidden = true; return; }
   if (cField) cField.hidden = entry.system === "cubic";
   const parts = [`<b>${entry.label}</b> · ${systemNames[entry.system] || entry.system}`];
-  if (entry.note) parts.push(entry.note);
-  parts.push(entry.modelled
+  if (entry.note && entry.basis !== "rutile") parts.push(entry.note);
+  parts.push(entry.basis === "rutile" ? "Calculated with a rutile atomic structure factor. Reference lattice and oxygen coordinates are not refinements of your sample." : entry.modelled
     ? "Calculated with the full ABO₃ structure factor — peak position and relative intensity are both modelled."
     : "Lattice-only approximation — the peak position and fringe spacing are right, but the substrate peak height is approximate (the coherent repeat count absorbs it).");
-  if (entry.system !== "cubic") parts.push("Enter hexagonal indices as three numbers (h k l). Sapphire (0006) is 006.");
+  if (entry.system === "hexagonal") parts.push("Enter hexagonal indices as three numbers (h k l). Sapphire (0006) is 006.");
   let warning = "";
   try {
-    if (reflectionAbsent(parseHkl($("hkl").value), entry.centering || "P")) {
-      warning = `<b class="sw-absent">Lattice centering forbids this reflection on ${entry.label}.</b> No substrate peak will be calculated — switch to an allowed one such as ${entry.suggest}.`;
+    if (reflectionAbsent(parseHkl($("hkl").value), entry.centering || "P") || entry.basis === "rutile" && rutileReflectionAbsent(parseHkl($("hkl").value))) {
+      warning = `<b class="sw-absent">This reflection is systematically absent in ${entry.label}.</b> Its Bragg marker is omitted — choose an allowed reflection (for example ${entry.suggest}).`;
     }
   } catch (error) { /* an unfinished hkl is reported elsewhere */ }
   note.innerHTML = (warning ? warning + "<br>" : "") + parts.join(" · ");
+}
+
+/* ---------- measured-fringe thickness diagnostic ---------- */
+function captureFringeInputs() {
+  return {roi:[$("fringe_min").value, $("fringe_max").value], manual_peaks:$("fringe_manual_peaks").value, manual_orders:$("fringe_manual_orders").value};
+}
+function applyFringeInputs(saved) {
+  invalidateFringes({clearInputs:true});
+  if (!saved || typeof saved !== "object") return;
+  if (Array.isArray(saved.roi) && saved.roi.length === 2) {
+    for (const [index, id] of ["fringe_min", "fringe_max"].entries()) {
+      const value = saved.roi[index];
+      if (typeof value === "string" || typeof value === "number") $(id).value = String(value);
+    }
+  }
+  if (typeof saved.manual_peaks === "string") $("fringe_manual_peaks").value = saved.manual_peaks;
+  if (typeof saved.manual_orders === "string") $("fringe_manual_orders").value = saved.manual_orders;
+}
+function invalidateFringes({clearInputs = false} = {}) {
+  state.fringe = null;
+  state.fringeRequest++;
+  if (clearInputs) for (const id of ["fringe_min", "fringe_max", "fringe_manual_peaks", "fringe_manual_orders"]) $(id).value = "";
+  $("estimateFringes").disabled = false;
+  $("fringeStatus").textContent = "Not estimated. Select a measured region with visible repeating fringes.";
+  $("fringeStatus").classList.remove("error");
+  $("fringeResult").hidden = true;
+  $("fringeWarning").hidden = true;
+}
+function useVisibleFringeRange() {
+  if (!state.measurement) { $("fringeStatus").textContent = "Open a measurement first."; return; }
+  const low = Math.max(state.view[0], state.measurement.angles[0]);
+  const high = Math.min(state.view[1], state.measurement.angles.at(-1));
+  $("fringe_min").value = trimNumber(low, 6); $("fringe_max").value = trimNumber(high, 6);
+  invalidateFringes();
+}
+function renderFringeComparison() {
+  if (!state.fringe || state.fringe.status !== "ok") return;
+  const t = state.fringe.thickness_nm;
+  let model = null, fitted = false;
+  try {
+    if (state.fitResult && !state.fitResult.stale && Number.isFinite(state.fitResult.thickness_nm)) {
+      model = state.fitResult.thickness_nm; fitted = true;
+    } else {
+      const config = readForm(); model = config.parameters.film_planes * filmRepeatNm(config.parameters);
+    }
+  } catch (error) { /* incomplete model inputs do not erase measured fringes */ }
+  $("fringeModelLabel").textContent = fitted ? "Thickness from fit result" : "Current model thickness (converted)";
+  $("fringeModelThickness").textContent = Number.isFinite(model) ? `${trimNumber(model, 3)} nm` : "—";
+  const difference = Number.isFinite(model) ? Math.abs(model / t - 1) : null;
+  $("fringeDifference").textContent = difference === null ? "—" : `${trimNumber(difference * 100, 2)}%`;
+  $("fringeWarning").hidden = difference === null || difference <= 0.05;
+  if (difference > 0.05) $("fringeWarning").textContent = "The two thicknesses differ by more than 5%. Check fringe selection, order assignments and the fitting model. This difference is not a statistical confidence interval.";
+}
+async function estimateFringes() {
+  let body;
+  try {
+    if (!state.measurement) throw new Error("Open a measurement first.");
+    const low = fitNumber("fringe_min", "Fringe range start"), high = fitNumber("fringe_max", "Fringe range end");
+    if (!(low > 0 && low < high && high < 180)) throw new Error("The fringe range must increase within 0–180°.");
+    if (low < state.measurement.angles[0] || high > state.measurement.angles.at(-1)) throw new Error("Keep the fringe range within the measured angular range.");
+    const wavelength = numericField("wavelength"), offset = numericField("angle_offset_deg");
+    if (!(wavelength > 0) || low - offset <= 0 || high - offset >= 180) throw new Error("Check the wavelength and zero offset for the fringe estimate.");
+    body = {measurement:state.measurement, wavelength, angle_offset_deg:offset, roi:[low, high]};
+    const manual = $("fringe_manual_peaks").value.trim();
+    if (manual) {
+      const peaks = manual.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (peaks.length < 4 || peaks.some((value, index) => !Number.isFinite(value) || value < low || value > high || index > 0 && value <= peaks[index-1])) throw new Error("Enter at least four increasing maximum angles within the selected fringe range.");
+      body.manual_peaks = peaks;
+    }
+    const manualOrders = $("fringe_manual_orders").value.trim();
+    if (manualOrders) {
+      const orders = manualOrders.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (!body.manual_peaks || orders.length !== body.manual_peaks.length || orders.some((value, index) => !Number.isSafeInteger(value) || Math.abs(value) > 10000 || index > 0 && value <= orders[index-1])) throw new Error("Enter one increasing integer order between −10,000 and 10,000 per maximum. Orders may be skipped.");
+      body.manual_orders = orders;
+    }
+  } catch (error) { $("fringeStatus").textContent = error.message; $("fringeStatus").classList.add("error"); return; }
+  invalidateFringes();
+  const request = state.fringeRequest;
+  $("estimateFringes").disabled = true;
+  $("fringeStatus").textContent = "Estimating q spacing from measured fringes…";
+  try {
+    const result = await getJson("/api/fringes", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    if (request !== state.fringeRequest) return;
+    const hasEvidence = Number.isFinite(result?.q_slope) && result.q_slope > 0 && Number.isFinite(result.relative_scatter)
+      && Array.isArray(result.peak_angles) && result.peak_angles.length >= 4 && result.peak_angles.every(Number.isFinite)
+      && Array.isArray(result.orders) && result.orders.length === result.peak_angles.length && result.orders.every(Number.isSafeInteger)
+      && Number.isFinite(result.angular_residual_rms_deg) && result.angular_residual_rms_deg >= 0
+      && [result.predicted_peak_angles,result.angular_residuals_deg].every(values=>Array.isArray(values) && values.length===result.peak_angles.length && values.every(Number.isFinite));
+    const valid = result?.status === "ok" && Number.isFinite(result.thickness_nm) && result.thickness_nm > 0 && hasEvidence;
+    if (hasEvidence && (valid || result.status === "irregular")) {
+      $("fringeAngleResidual").textContent = `${trimNumber(result.angular_residual_rms_deg, 6)}°`;
+      $("fringeQuality").textContent = `${result.peak_angles.length} maxima · q spacing per order ${result.q_slope.toPrecision(5)} Å⁻¹ · relative interval scatter ${trimNumber(result.relative_scatter * 100, 2)}%`;
+      const detail=$("fringePeaks"), table=document.createElement("table");detail.replaceChildren();table.className="peak-table";
+      const header=document.createElement("tr");
+      for(const label of ["Order","Observed 2θ (°)","Regressed 2θ (°)","Angular residual (°)"]){const th=document.createElement("th");th.textContent=label;header.append(th);}table.append(header);
+      for(const [i,value] of result.peak_angles.entries()) {
+        const row=document.createElement("tr");
+        for(const text of [`n=${result.orders[i]}`,value.toFixed(6),result.predicted_peak_angles[i].toFixed(6),result.angular_residuals_deg[i].toFixed(6)]){const td=document.createElement("td");td.textContent=text;row.append(td);}table.append(row);
+      }detail.append(table);
+      $("fringeResult").hidden = false;
+    }
+    if (!valid) {
+      $("fringeThickness").textContent = "Not estimated";
+      $("fringeModelThickness").textContent = "—";
+      $("fringeDifference").textContent = "—";
+      $("fringeStatus").textContent = result?.status === "irregular" ? "Not estimated: interval quality checks failed. Review the regression residuals for the assigned orders, range and maxima." : "Not estimated: too few reliable fringes. Select a region with repeating fringes or enter maxima and orders manually.";
+      return;
+    }
+    state.fringe = result;
+    $("fringeStatus").textContent = "Thickness follows the selected maxima and assigned orders. Regular spacing or small residuals alone do not establish those assignments.";
+    $("fringeThickness").textContent = `${trimNumber(result.thickness_nm, 3)} nm`;
+    renderFringeComparison();
+  } catch (error) {
+    if (request === state.fringeRequest) { $("fringeStatus").textContent = "Could not evaluate the fringes. Check the measured data, wavelength, angle offset and selected range."; $("fringeStatus").classList.add("error"); }
+  } finally { if (request === state.fringeRequest) $("estimateFringes").disabled = false; }
+}
+
+/* ---------- descriptive peak decomposition; independent of physical fit ---------- */
+function capturePeakInputs() {
+  return {roi:[$("peak_min").value, $("peak_max").value], peak_count:Number($("peak_count").value),reference_center:$("peak_reference_center").value,reference_d:$("peak_reference_d").value};
+}
+function applyPeakInputs(saved) {
+  invalidatePeaks({clearInputs:true});
+  if (!saved || typeof saved !== "object") return;
+  if (Array.isArray(saved.roi) && saved.roi.length === 2) for (const [i, id] of ["peak_min", "peak_max"].entries()) {
+    if (["string", "number"].includes(typeof saved.roi[i])) $(id).value = String(saved.roi[i]);
+  }
+  if ([1,2].includes(Number(saved.peak_count))) $("peak_count").value = String(saved.peak_count);
+  for (const [key,id] of [["reference_center","peak_reference_center"],["reference_d","peak_reference_d"]]) if (["string","number"].includes(typeof saved[key])) $(id).value=String(saved[key]);
+}
+function invalidatePeaks({clearInputs=false}={}) {
+  state.peakAnalysis = null; state.peakRequest++;
+  if (clearInputs) { $("peak_min").value = ""; $("peak_max").value = ""; $("peak_count").value = "2"; $("peak_reference_center").value=""; $("peak_reference_d").value=""; }
+  $("fitPeaks").disabled = false;
+  $("peakResult").hidden = true;
+  $("peakStatus").classList.remove("error");
+  $("peakStatus").textContent = "Not analyzed. Select a measured range containing the peaks.";
+}
+function useVisiblePeakRange() {
+  if (!state.measurement) { $("peakStatus").textContent = "Open a measurement first."; return; }
+  const low = Math.max(state.view[0], state.measurement.angles[0]), high = Math.min(state.view[1], state.measurement.angles.at(-1));
+  if (!(low < high)) return;
+  $("peak_min").value = trimNumber(low, 6); $("peak_max").value = trimNumber(high, 6); invalidatePeaks();
+}
+function drawPeakAnalysis(result, linearResult) {
+  const svg = $("peakPlot"), ns = "http://www.w3.org/2000/svg", width = 720, height = 220;
+  svg.replaceChildren(); svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const left = 42, top = 12, right = width-12, bottom = height-32;
+  const x0=result.angles[0], x1=result.angles.at(-1), maximum=Math.max(...result.measured, ...result.predicted, ...linearResult.predicted);
+  const xp=x=>left+(x-x0)/(x1-x0)*(right-left), yp=y=>bottom-(Math.log10(Math.max(y/maximum,1e-4))+4)/4*(bottom-top);
+  const add=(name,attrs,text)=>{const n=document.createElementNS(ns,name);for(const [key,value] of Object.entries(attrs))n.setAttribute(key,String(value));if(text!==undefined)n.textContent=text;svg.append(n);return n;};
+  for(let decade=0;decade<=4;decade++) {
+    const y=top+decade*(bottom-top)/4;
+    add("line",{x1:left,y1:y,x2:right,y2:y,stroke:"#e4ebf2"});
+    add("text",{x:left-6,y:y+4,"text-anchor":"end",class:"peak-axis"},decade===0?"1":`10⁻${decade}`);
+  }
+  for(let i=0;i<=4;i++) { const x=x0+(x1-x0)*i/4;add("text",{x:xp(x),y:bottom+18,"text-anchor":"middle",class:"peak-axis"},x.toFixed(2)); }
+  add("text",{x:(left+right)/2,y:height-2,"text-anchor":"middle",class:"peak-axis"},"2θ (°)");
+  for(const [values,color] of [[result.measured,"#8b99aa"],[result.predicted,"#2563b8"],[linearResult.predicted,"#c87a22"]]) {
+    const path=values.map((v,i)=>`${i?"L":"M"}${xp(result.angles[i]).toFixed(2)},${yp(v).toFixed(2)}`).join(" ");
+    add("path",{d:path,fill:"none",stroke:color,"stroke-width":1.5});
+  }
+}
+async function analyzePeaks() {
+  let body;
+  try {
+    if (!state.measurement) throw new Error("Open a measurement first.");
+    const lo=fitNumber("peak_min", "Peak-analysis range start"), hi=fitNumber("peak_max", "Peak-analysis range end");
+    if (!(state.measurement.angles[0]<=lo && lo<hi && hi<=state.measurement.angles.at(-1))) throw new Error("Enter an increasing peak-analysis range within the measured scan.");
+    const wavelength=numericField("wavelength"), angle_offset_deg=numericField("angle_offset_deg");
+    if (!(wavelength>0) || lo-angle_offset_deg<=0 || hi-angle_offset_deg>=180) throw new Error("Check the wavelength and zero offset for peak analysis.");
+    body={measurement:state.measurement,wavelength,angle_offset_deg,roi:[lo,hi],hkl:normaliseHkl($("hkl").value),peak_count:Number($("peak_count").value),max_evaluations:2000};
+    if ($("peak_reference_center").value.trim() || $("peak_reference_d").value.trim()) {
+      const center_deg=fitNumber("peak_reference_center","Reference peak center"), d_angstrom=fitNumber("peak_reference_d","Reference d");
+      if (!(center_deg-angle_offset_deg>0 && center_deg-angle_offset_deg<180 && d_angstrom>0)) throw new Error("Check both the reference peak angle and positive reference d-spacing.");
+      body.reference={center_deg,d_angstrom};
+    }
+  } catch(error) { $("peakStatus").textContent=error.message;$("peakStatus").classList.add("error");return; }
+  invalidatePeaks();const request=state.peakRequest;$("fitPeaks").disabled=true;
+  $("peakStatus").textContent="Decomposing the peak shape in the selected range…";
+  try {
+    const results=[];
+    for(const loss of ["soft_log","linear"]) {
+      const result=await getJson("/api/peaks",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,loss})});
+      if(request!==state.peakRequest)return;
+      if(!result || !Array.isArray(result.components) || result.components.length!==body.peak_count || !result.components.every(c=>[c.center_deg,c.fwhm_deg,c.area,c.area_fraction,c.roi_area_fraction,c.eta,c.d_angstrom].every(Number.isFinite)) || !Array.isArray(result.angles) || result.angles.length<3 || !Array.isArray(result.measured) || !Array.isArray(result.predicted) || result.measured.length!==result.angles.length || result.predicted.length!==result.angles.length || ![...result.angles,...result.measured,...result.predicted,result.soft_log_rmse,result.log_rmse,result.fit_rmse,result.evaluations].every(Number.isFinite)) throw new Error("Invalid peak analysis response");
+      results.push(result);
+      if(loss==="soft_log")$("peakStatus").textContent="Analyzing the same range with linear loss to compare methods…";
+    }
+    const [soft,linear]=results;state.peakAnalysis={soft_log:soft,linear};
+    const tbody=$("peakComponents"), comparison=$("peakComparison");tbody.replaceChildren();comparison.replaceChildren();
+    $("peakReferenceDHeader").hidden=!body.reference;$("peakReferenceCHeader").hidden=!body.reference;
+    const appendRow=(target,values)=>{const row=document.createElement("tr");for(const value of values){const cell=document.createElement("td");cell.textContent=String(value);row.append(cell);}target.append(row);};
+    const methodDifferences=[];
+    for(let i=0;i<body.peak_count;i++) {
+      const a=soft.components[i],b=linear.components[i],difference=Math.abs(a.center_deg-b.center_deg);methodDifferences.push(difference);
+      const weak=Math.min(a.area_fraction,b.area_fraction)<.15;
+      appendRow(comparison,[i+1,a.center_deg.toFixed(5),b.center_deg.toFixed(5),difference.toFixed(5),Number.isFinite(a.c_00l_angstrom)?a.c_00l_angstrom.toFixed(5):"—",Number.isFinite(b.c_00l_angstrom)?b.c_00l_angstrom.toFixed(5):"—",`${trimNumber(a.area_fraction*100,2)}%`,`${trimNumber(b.area_fraction*100,2)}%`,weak?"Weakly determined component (assumed profile)":"Profile component"]);
+    }
+    for(const [method,result] of [["soft-log",soft],["linear",linear]])for(const [i,c] of result.components.entries()) {
+      const values=[method,i+1,c.center_deg.toFixed(5),c.d_angstrom.toFixed(5),Number.isFinite(c.c_00l_angstrom)?c.c_00l_angstrom.toFixed(5):"—",c.fwhm_deg.toFixed(5),c.area.toPrecision(5),`${trimNumber(c.area_fraction*100,2)}%`,`${trimNumber(c.roi_area_fraction*100,2)}%`,trimNumber(c.eta,3)];
+      if(body.reference)values.push(Number.isFinite(c.d_reference_angstrom)?c.d_reference_angstrom.toFixed(5):"—",Number.isFinite(c.c_00l_reference_angstrom)?c.c_00l_reference_angstrom.toFixed(5):"—");
+      appendRow(tbody,values);
+    }
+    $("peakMetrics").textContent=`soft-log objective RMSE ${soft.fit_rmse.toFixed(4)} · linear objective RMSE ${linear.fit_rmse.toFixed(4)} · ${soft.evaluations.toLocaleString("en")} + ${linear.evaluations.toLocaleString("en")} evaluations (different error definitions)`;
+    const warning=[];
+    if(methodDifferences.some(value=>value>.02))warning.push("The methods differ in peak center by more than 0.02°. Peak position is sensitive to the chosen objective.");
+    if(results.some(result=>result.boundary_hits?.length))warning.push("Some values reached search boundaries. Check sensitivity to the range and starting values.");
+    if(results.some(result=>result.multistart?.materially_different))warning.push("Other decompositions have similar errors. This assignment is not unique.");
+    if(results.some(result=>result.components.some(c=>c.area_fraction<.15)))warning.push("The small component is a weakly determined profile feature. Consider fringe overlap and alternative decompositions.");
+    if(results.some(result=>result.components.some(c=>c.roi_area<.8*c.area)))warning.push("More than 20% of a component area is extrapolated outside the selected range. Compare full and ROI area fractions.");
+    $("peakWarnings").textContent=warning.join(" ");$("peakWarnings").hidden=!warning.length;
+    $("peakStatus").textContent="This is a peak-shape decomposition. It does not establish spatial arrangement, layers or phase assignments.";
+    $("peakResult").hidden=false;drawPeakAnalysis(soft,linear);
+  } catch(error) {
+    if(request===state.peakRequest){$("peakStatus").textContent="Could not complete peak analysis. Check the measured data, selected range, wavelength and zero offset.";$("peakStatus").classList.add("error");}
+  } finally {if(request===state.peakRequest)$("fitPeaks").disabled=false;}
 }
 
 function captureFitSettings() {
@@ -419,6 +736,7 @@ function captureFitSettings() {
 function applyFitSettings(settings) {
   // A legacy session must not inherit newly enabled fit variables from this tab.
   for (const key of optionalFitKeys) $("fit_enable_" + key).checked = false;
+  if (!settings?.variables?.film_lattice_c) $("fit_enable_film_lattice_c").checked = filmAxisMode() === "00l";
   if (!settings || typeof settings !== "object") {
     refreshFitControls();
     return false;
@@ -439,7 +757,7 @@ function applyFitSettings(settings) {
       if (typeof item.enabled === "boolean") $("fit_enable_" + key).checked = item.enabled;
       const oldCountBounds = key === "film_planes" && settings.thickness_unit !== "nm";
       if (oldCountBounds) migratedThicknessBounds = true;
-      const repeat = oldCountBounds ? projectedRepeatNm(Number($("film_lattice_a").value), $("hkl").value) : 1;
+      const repeat = oldCountBounds ? filmRepeatNm(filmFormGeometry()) : 1;
       if (item.low !== null && item.low !== undefined) $("fit_low_" + key).value = oldCountBounds ? String(Number(item.low) * repeat) : String(item.low);
       if (item.high !== null && item.high !== undefined) $("fit_high_" + key).value = oldCountBounds ? String(Number(item.high) * repeat) : String(item.high);
     }
@@ -451,6 +769,12 @@ function applyFitSettings(settings) {
 }
 
 function refreshFitControls() {
+  const mode = filmAxisMode();
+  for (const [key, inactive] of [["film_lattice_a", mode === "00l"], ["film_lattice_c", mode === "cubic" || mode === "hk0"]]) {
+    const box = $("fit_enable_" + key);
+    if (inactive) box.checked = false;
+    box.disabled = inactive || state.fitBusy;
+  }
   if ($("fit_enable_film_interface_width").checked) $("advancedFitVariables").open = true;
   for (const key of fitKeys) {
     const row = document.querySelector(`[data-fit-key="${key}"]`);
@@ -471,9 +795,10 @@ function validateFitBounds(key, low, high, scan) {
   if (!(low < high)) throw new Error(`The lower bound of ${name} must be below the upper bound.`);
   if (key === "substrate_planes" && (!Number.isInteger(low) || !Number.isInteger(high) || low < 1 || high > substrateFitMax)) throw new Error(`${name} bounds must be whole numbers from 1 to ${substrateFitMax.toLocaleString("en")}.`);
   if (key === "film_planes" && low <= 0) throw new Error("Thickness bounds must be greater than 0 nm.");
-  if (key === "film_lattice_a" && (low <= 0 || high > 20)) throw new Error("Film lattice constant bounds must be above 0 and at most 20 Å.");
-  if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("Film lattice gradient Δa bounds must be within −0.20 to +0.20 Å.");
+  if (["film_lattice_a", "film_lattice_c"].includes(key) && (low <= 0 || high > 20)) throw new Error("Film lattice constant bounds must be above 0 and at most 20 Å.");
+  if (key === "film_lattice_gradient_a" && (low < -0.2 || high > 0.2)) throw new Error("Film out-of-plane lattice gradient bounds must be within −0.20 to +0.20 Å.");
   if (key === "angle_offset_deg" && (low < -5 || high > 5 || scan.xmin - high <= 0 || scan.xmax - low >= 180)) throw new Error("Zero offset bounds must be within ±5° and must keep the calculated angles inside 0–180°.");
+  if (key === "film_intensity_scale" && (low < 0 || high > 100)) throw new Error("Film relative intensity scale bounds must be between 0 and 100.");
   if (key === "fwhm_deg" && (low < 0 || high > 2)) throw new Error("Instrumental width bounds must be between 0 and 2°.");
   if (key === "resolution_halo_fraction" && (low < 0 || high > 0.2)) throw new Error("Broad resolution component fraction f bounds must be between 0 and 0.2.");
   if (key === "resolution_halo_width" && (low < 1 || high > 20)) throw new Error("Broad resolution component width multiplier m bounds must be between 1 and 20.");
@@ -504,10 +829,13 @@ function readFitSettings(config) {
     else bounds[key] = [lower, upper];
   }
   if (thicknessBoundsNm) {
-    const factor = projectedRepeatNm(1, config.parameters.hkl);
-    const aBounds = bounds.film_lattice_a || [config.parameters.film_lattice_a, config.parameters.film_lattice_a];
-    const nLow = Math.max(1, Math.ceil(thicknessBoundsNm[0] / (aBounds[1] * factor) - 1e-7));
-    const nHigh = Math.min(20000, Math.floor(thicknessBoundsNm[1] / (aBounds[0] * factor) + 1e-7));
+    const p = config.parameters;
+    const aBounds = bounds.film_lattice_a || [p.film_lattice_a, p.film_lattice_a];
+    const cBounds = bounds.film_lattice_c || [p.film_lattice_c, p.film_lattice_c];
+    const lowRepeat = filmRepeatNm({...p, film_lattice_a:aBounds[0], film_lattice_c:cBounds[0]});
+    const highRepeat = filmRepeatNm({...p, film_lattice_a:aBounds[1], film_lattice_c:cBounds[1]});
+    const nLow = Math.max(1, Math.ceil(thicknessBoundsNm[0] / highRepeat - 1e-7));
+    const nHigh = Math.min(20000, Math.floor(thicknessBoundsNm[1] / lowRepeat + 1e-7));
     if (!(nLow < nHigh)) throw new Error("At least two repeat counts must fall inside the thickness bounds. Widen them.");
     bounds.film_planes = [nLow, nHigh];
   }
@@ -520,7 +848,7 @@ function readFitSettings(config) {
 function projectFitStart(config, fit) {
   const parameters = {...config.parameters}, adjusted = [];
   for (const [key, [low, high]] of Object.entries(fit.bounds)) {
-    const original = parameters[key];
+    const original = key === "film_lattice_c" ? parameters[key] || parameters.film_lattice_a : parameters[key];
     parameters[key] = Math.max(low, Math.min(high, original));
     if (parameters[key] !== original) adjusted.push(`${key === "film_planes" ? "N from thickness" : labelFor(key)} ${trimNumber(original, 5)}→${trimNumber(parameters[key], 5)}`);
   }
@@ -547,6 +875,8 @@ function validateCurve(raw, filename = "Measurement") {
 function setMeasurement(raw, {adjustScan = true} = {}) {
   const measurement = validateCurve(raw);
   state.measurement = measurement;
+  invalidatePeaks({clearInputs:true});
+  invalidateFringes({clearInputs:true});
   hideFitResult({clearResidual:true});
   setFitProgress(`Waiting to fit · up to ${Number($("fit_evaluations").value).toLocaleString("en")} model evaluations`);
   const {angles, intensities, filename} = measurement;
@@ -851,19 +1181,25 @@ function showFitResult(result, fit) {
   $("fitThicknessLabel").textContent = thicknessFitted ? "Thickness (fitted)" : "Thickness (converted at fixed N)";
   $("fitPlanesLabel").textContent = thicknessFitted ? "Repeats N (fitted)" : "Repeats N (fixed)";
   $("fitThickness").textContent = `${result.thickness_nm.toFixed(2)} nm`;
-  $("fitLattice").textContent = `${result.config.parameters.film_lattice_a.toFixed(5)} Å`;
-  const meanA = result.config.parameters.film_lattice_a, gradientA = result.config.parameters.film_lattice_gradient_a;
-  $("fitGradientLabel").textContent = fit.bounds?.film_lattice_gradient_a ? "Film lattice gradient Δa (fitted)" : "Film lattice gradient Δa (fixed)";
+  const resultParams = result.config.parameters, activeC = filmAxisMode(resultParams) === "00l";
+  $("fitLatticeLabel").textContent = activeC ? "Film mean c" : "Film mean a";
+  $("fitLattice").textContent = `${filmActiveMean(resultParams).toFixed(5)} Å`;
+  $("fitOtherLatticeField").hidden = resultParams.film_system !== "tetragonal";
+  $("fitOtherLatticeLabel").textContent = activeC ? "Film a (fixed)" : "Film c";
+  $("fitOtherLattice").textContent = `${(activeC ? resultParams.film_lattice_a : resultParams.film_lattice_c || resultParams.film_lattice_a).toFixed(5)} Å`;
+  const meanA = filmActiveMean(result.config.parameters), gradientA = result.config.parameters.film_lattice_gradient_a;
+  $("fitGradientLabel").textContent = filmGradientLabel(resultParams) + (fit.bounds?.film_lattice_gradient_a ? " (fitted)" : " (fixed)");
   $("fitGradient").textContent = `${gradientA > 0 ? "+" : ""}${gradientA.toFixed(5)} Å`;
   $("fitGradientEndpoints").textContent = `interface ${((meanA - gradientA / 2)).toFixed(5)} → surface ${((meanA + gradientA / 2)).toFixed(5)} Å`;
   $("fitPlanes").textContent = `${result.config.parameters.film_planes}`;
   const initialFwhm = Number(fit.initial_parameters?.fwhm_deg);
   const finalFwhm = result.config.parameters.fwhm_deg;
   $("fitFwhm").textContent = fit.bounds?.fwhm_deg ? (Number.isFinite(initialFwhm) ? `${initialFwhm.toFixed(4)} → ${finalFwhm.toFixed(4)}°` : `${finalFwhm.toFixed(4)}°`) : `${finalFwhm.toFixed(4)}° fixed`;
-  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "repeats"], ["film_thickness_sigma", "fitThicknessSigma", "repeats"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
+  for (const [key, id, unit] of [["resolution_halo_fraction", "fitHaloFraction", ""], ["resolution_halo_width", "fitHaloWidth", "×"], ["film_interface_width", "fitInterfaceWidth", "repeats"], ["film_thickness_sigma", "fitThicknessSigma", "repeats"], ["film_intensity_scale", "fitFilmScale", "×"], ["background_slope", "fitBackgroundSlope", "log₁₀/°"]]) {
     const value = result.config.parameters[key], mode = fit.bounds?.[key] ? "fitted" : "fixed";
     $(id).textContent = `${trimNumber(value, 5)} ${unit} · ${mode}`;
   }
+  renderFringeComparison();
   $("fitLpMode").textContent = Array.from($("lp_mode").options).find(option => option.value === result.config.parameters.lp_mode)?.textContent || "—";
   $("fitPeakFwhm").textContent = result.measured_peak_fwhm_deg === null || result.fitted_peak_fwhm_deg === null ? "not measurable" : `${result.measured_peak_fwhm_deg.toFixed(4)} → ${result.fitted_peak_fwhm_deg.toFixed(4)}°`;
   $("fitError").textContent = `${result.initial_log_rmse === null ? "—" : result.initial_log_rmse.toFixed(3)} → ${result.best_log_rmse.toFixed(3)}`;
@@ -880,6 +1216,9 @@ function showFitResult(result, fit) {
     else if (Math.abs(value - high) <= tolerance) boundaryHits.push({key, side:"upper bound"});
   }
   const warnings = [];
+  if (filmAxisMode(resultParams) === "mixed" && fit.bounds?.film_lattice_a && fit.bounds?.film_lattice_c) warnings.push("A single mixed reflection constrains only a combination of a and c. Do not interpret both fitted axes as independent lattice measurements.");
+  if (resultParams.film_intensity_scale === 0) warnings.push("Film intensity scale is zero, so there is no film scattering. Film lattice, thickness and gradient cannot be determined in this condition.");
+  if (fit.bounds?.film_intensity_scale && resultParams.substrate_planes === 0) warnings.push("Without substrate scattering, normalization cancels a positive film intensity scale. Adding relative background does not determine this scale.");
   const haloFraction = result.config.parameters.resolution_halo_fraction;
   const haloWidth = result.config.parameters.resolution_halo_width;
   if (haloFraction === 0 && fit.bounds?.resolution_halo_width) warnings.push("The broad component fraction f is zero, so width multiplier m is unconstrained. Do not interpret a fitted m under this condition.");
@@ -889,7 +1228,7 @@ function showFitResult(result, fit) {
   if (result.config.parameters.background === 0 && (result.config.parameters.background_slope !== 0 || fit.bounds?.background_slope)) warnings.push("The relative background is zero, so the log background slope has no effect. Do not interpret a fitted slope under this condition.");
   let filmCountHit = boundaryHits.find((item) => item.key === "film_planes");
   if (!filmCountHit && fit.thickness_bounds_nm) {
-    const repeatNm = projectedRepeatNm(result.config.parameters.film_lattice_a, result.config.parameters.hkl);
+    const repeatNm = filmRepeatNm(result.config.parameters);
     const smallestN = Math.ceil(fit.thickness_bounds_nm[0] / repeatNm - 1e-7);
     const largestN = Math.floor(fit.thickness_bounds_nm[1] / repeatNm + 1e-7);
     if (result.config.parameters.film_planes <= smallestN) filmCountHit = {key:"film_planes", side:"lower bound"};
@@ -900,10 +1239,10 @@ function showFitResult(result, fit) {
   if (gradientHit) {
     const selectedEdge = gradientHit.side === "lower bound" ? fit.bounds.film_lattice_gradient_a[0] : fit.bounds.film_lattice_gradient_a[1];
     const limitAdvice = Math.abs(selectedEdge) >= .2 - 1e-9 ? "That is the end of the range this interface allows." : "Widen the bounds within ±0.20 Å and run it again if that is reasonable.";
-    warnings.push(`The film lattice gradient Δa reached the ${gradientHit.side} at ${selectedEdge.toFixed(3)} Å. ${limitAdvice} Do not read the model gradient as an independently measured strain.`);
+    warnings.push(`${filmGradientLabel(resultParams)} reached the selected ${gradientHit.side} bound of ${selectedEdge.toFixed(3)} Å. ${limitAdvice} Do not interpret the model gradient as independently measured strain.`);
   }
   const largeGradient = Math.abs(gradientA) / meanA > .01;
-  if (largeGradient) warnings.push(`The film lattice gradient |Δa|/mean a is ${(Math.abs(gradientA) / meanA * 100).toFixed(2)}%. This is the model's effective change in normal spacing, not strain confirmed by another measurement. Compare other gradient, thickness and instrumental-width assumptions as well.`);
+  if (largeGradient) warnings.push(`The relative film lattice gradient is ${(Math.abs(gradientA) / meanA * 100).toFixed(2)}%. This is an effective normal-spacing change in the model, not independently established strain. Compare other gradient, thickness and instrumental-width assumptions.`);
   const fwhmHit = boundaryHits.find((item) => item.key === "fwhm_deg");
   if (fwhmHit) warnings.push(`The instrumental Gaussian FWHM reached its ${fwhmHit.side}. Check the measured and modelled peak positions and the reflection you assigned — FWHM does not correct a position error.`);
   if (fit.bounds?.fwhm_deg && result.measured_peak_fwhm_deg !== null && result.fitted_peak_fwhm_deg !== null && Math.abs(result.fitted_peak_fwhm_deg - result.measured_peak_fwhm_deg) / result.measured_peak_fwhm_deg > .25) warnings.push(`The calculated peak width ${result.fitted_peak_fwhm_deg.toFixed(4)}° differs from the measured ${result.measured_peak_fwhm_deg.toFixed(4)}° by more than 25%. Check the peak region, the instrumental-width bounds and the model assumptions.`);
@@ -1318,10 +1657,9 @@ function observedPeakIn(lo, hi) {
   return found.index >= 0 ? state.measurement.angles[found.index] : null;
 }
 
-function braggAngle(a, hkl, wavelength) {
-  const values = hkl.split("").map(Number), magnitude = Math.hypot(...values);
-  const sine = wavelength * magnitude / (2 * a);
-  if (sine <= 0 || sine > 1) throw new Error("That reflection is not reachable at this wavelength and lattice constant.");
+function braggAngle(a, hkl, wavelength, c = 0, system = "cubic") {
+  const sine = wavelength / (2 * latticeD(a, hkl, c, system));
+  if (!Number.isFinite(sine) || sine <= 0 || sine > 1) throw new Error("That reflection is not reachable at this wavelength and lattice constant.");
   return 2 * Math.asin(sine) * 180 / Math.PI;
 }
 
@@ -1332,10 +1670,13 @@ async function alignObservedAsSto() {
   const observed = observedPeakIn(config.scan.xmin, config.scan.xmax);
   if (observed === null) { setStatus("The measured peak to align with is outside the current calculation range.", true); return; }
   try {
-    const expected = braggAngle(config.parameters.substrate_lattice_a, config.parameters.hkl, config.parameters.wavelength);
+    const p = config.parameters, entry = substrates.get(p.substrate_material), indices = parseHkl(p.hkl);
+    if (reflectionAbsent(indices, entry?.centering || "P") || entry?.basis === "rutile" && rutileReflectionAbsent(indices)) throw new Error("The selected substrate reflection is systematically absent and cannot be used for alignment.");
+    const expected = braggAngle(p.substrate_lattice_a, p.hkl, p.wavelength, p.substrate_lattice_c, entry?.system || "cubic");
     const offset = observed - expected;
     if (Math.abs(offset) > 5) throw new Error("The offset needed is beyond ±5°. Check the reflection and the wavelength.");
     $("angle_offset_deg").value = offset.toFixed(5);
+    invalidateFringes(); invalidatePeaks();
     markCurveStale();
     markFitResultStale();
     if (await runSimulation()) setStatus(`Took the measured main peak at ${observed.toFixed(3)}° as the substrate ${config.parameters.hkl} and applied a zero offset of ${offset >= 0 ? "+" : ""}${offset.toFixed(3)}°. Check the reflection assignment yourself.`);
@@ -1361,6 +1702,8 @@ async function saveProject() {
     const project = {format:"xrd-studio-project-v1",model_revision:modelRevision,parameters:state.config.parameters,scan:state.config.scan,measurement_name:state.measurement?.filename || "no measurement"};
     if (state.measurement) project.measurement = {two_theta_deg:state.measurement.angles,intensity_raw:state.measurement.intensities};
     project.fit_settings = captureFitSettings();
+    project.fringe_settings = captureFringeInputs();
+    project.peak_settings = capturePeakInputs();
     if (state.fitResult && !state.fitResult.stale) project.fit_result = state.fitResult;
     downloadText("xrd_studio_project.json", JSON.stringify(project, null, 2), "application/json;charset=utf-8");
     setStatus("Saved the settings, the fit range and the raw measured data to a JSON file.");
@@ -1377,7 +1720,9 @@ async function loadProject(file) {
     if (project.measurement) measurement = validateCurve({...project.measurement, filename:project.measurement_name || "saved measurement"});
     applyConfig(config);
     if (measurement) setMeasurement(measurement, {adjustScan:false});
-    else {state.measurement = null; $("dataName").textContent = "no measurement"; $("dataMeta").textContent = "2θ (°), intensity · two-column file";}
+    else {state.measurement = null; invalidateFringes({clearInputs:true}); $("dataName").textContent = "no measurement"; $("dataMeta").textContent = "2θ (°), intensity · two-column file";}
+    applyFringeInputs(project.fringe_settings);
+    applyPeakInputs(project.peak_settings);
     const migratedThicknessBounds = applyFitSettings(project.fit_settings);
     if (await runSimulation()) {
       if (measurement && project.fit_result && project.model_revision !== modelRevision) {
@@ -1430,12 +1775,23 @@ function bindEvents() {
     if (!event.target.matches("input, select")) return;
     markFitResultStale();
     if (modelInputIds.has(event.target.id)) markCurveStale();
+    if (["wavelength", "angle_offset_deg", "hkl", "film_material", "substrate_material"].includes(event.target.id)) invalidatePeaks();
+    if (["wavelength", "angle_offset_deg"].includes(event.target.id)) invalidateFringes();
+    else renderFringeComparison();
     if (event.target.id === "fit_min" || event.target.id === "fit_max") renderResidualDiagnostics();
   });
   $("film_thickness_nm").addEventListener("input", updateThicknessConversion);
   for (const eventName of ["change", "blur"]) $("film_thickness_nm").addEventListener(eventName, () => { try { snapThicknessToModel(); } catch (error) { setStatus(error.message, true); } });
-  for (const id of ["film_lattice_a", "hkl"]) $(id).addEventListener("input", syncThicknessForLatticeChange);
-  for (const id of ["fit_low_film_planes", "fit_high_film_planes", "fit_low_film_lattice_a", "fit_high_film_lattice_a"]) $(id).addEventListener("input", updateThicknessConversion);
+  for (const id of ["film_lattice_a", "film_lattice_c", "hkl"]) $(id).addEventListener("input", () => { refreshFilmControls(); refreshSubstrateNote(); syncThicknessForLatticeChange(); });
+  $("film_material").addEventListener("change", onFilmChange);
+  for (const id of ["film_system", "film_basis"]) $(id).addEventListener("change", () => { refreshFilmControls(); syncThicknessForLatticeChange(); });
+  for (const id of ["fit_low_film_planes", "fit_high_film_planes", "fit_low_film_lattice_a", "fit_high_film_lattice_a", "fit_low_film_lattice_c", "fit_high_film_lattice_c"]) $(id).addEventListener("input", updateThicknessConversion);
+  $("fitPeaks").addEventListener("click", analyzePeaks);
+  $("peakUseVisible").addEventListener("click", useVisiblePeakRange);
+  for (const id of ["peak_min", "peak_max", "peak_count", "peak_reference_center", "peak_reference_d"]) $(id).addEventListener("input", () => invalidatePeaks());
+  $("estimateFringes").addEventListener("click", estimateFringes);
+  $("fringeUseVisible").addEventListener("click", useVisibleFringeRange);
+  for (const id of ["fringe_min", "fringe_max", "fringe_manual_peaks", "fringe_manual_orders"]) $(id).addEventListener("input", () => invalidateFringes());
   $("runFit").addEventListener("click", runFit);
   $("cancelFit").addEventListener("click", cancelFit);
   $("useVisibleRange").addEventListener("click", useVisibleRange);

@@ -41,13 +41,13 @@ window.XRDLocal = (() => {
     }
     const unexpected = Object.keys(values).filter((key) => !(key in XRDCore.DEFAULTS)).sort();
     if (unexpected.length) throw new Error(`Unknown model parameter: ${unexpected.join(", ")}`);
-    const params = Object.assign({}, XRDCore.DEFAULTS, values);
-    for (const key of ["wavelength", "film_lattice_a", "substrate_lattice_a",
+    let params = Object.assign({}, XRDCore.DEFAULTS, values);
+    for (const key of ["wavelength", "film_lattice_a", "film_lattice_c", "substrate_lattice_a",
                        "substrate_lattice_c", "angle_offset_deg", "fwhm_deg", "background",
                        "film_lattice_gradient_a", "film_interface_width",
                        "film_thickness_sigma", "background_slope",
-                       "resolution_halo_fraction", "resolution_halo_width"]) {
-      params[key] = numeric(params[key], key, key.startsWith("resolution_halo_"));
+                       "resolution_halo_fraction", "resolution_halo_width", "film_intensity_scale"]) {
+      params[key] = numeric(params[key], key, (key.startsWith("resolution_halo_") || ["film_intensity_scale", "film_lattice_c"].includes(key)));
     }
     for (const key of ["film_planes", "substrate_planes"]) {
       const count = numeric(params[key], key);
@@ -58,9 +58,7 @@ window.XRDLocal = (() => {
       params[key] = count;
     }
     XRDCore.parseHkl(params.hkl);
-    if (!(params.film_material in catalogue.film_sites)) {
-      throw new Error(`Supported films: ${Object.keys(catalogue.film_sites).join(", ")}`);
-    }
+    params = XRDCore.normalizeParams(params);
     if (!(params.substrate_material in catalogue.substrates)) {
       throw new Error(`Supported substrates: ${Object.keys(catalogue.substrates).join(", ")}`);
     }
@@ -86,7 +84,9 @@ window.XRDLocal = (() => {
     if (Math.abs(params.film_lattice_gradient_a) > 0.2) {
       throw new Error("film_lattice_gradient_a must be within -0.2 to 0.2 Å");
     }
-    if (params.film_lattice_a - Math.abs(params.film_lattice_gradient_a) / 2 <= 0) {
+    const gradientMean = XRDCore.filmActiveLatticeKey(params) === "film_lattice_c"
+      ? XRDCore.filmLattice(params)[1] : params.film_lattice_a;
+    if (gradientMean - Math.abs(params.film_lattice_gradient_a) / 2 <= 0) {
       throw new Error("The film lattice gradient gives a nonpositive local lattice parameter");
     }
     if (params.film_lattice_gradient_a && params.film_planes < 2) {
@@ -135,13 +135,14 @@ window.XRDLocal = (() => {
     const intensities = XRDCore.simulate(angles, params);
     let filmPeak = null, substratePeak = null;
     try {
-      filmPeak = XRDCore.braggAngle(params.film_lattice_a, params.hkl, params.wavelength)
-                 + params.angle_offset_deg;
+      filmPeak = XRDCore.filmBraggAngle(params) + params.angle_offset_deg;
+      if (params.film_basis === "rutile" && XRDCore.rutileReflectionAbsent(XRDCore.parseHkl(params.hkl))) filmPeak = null;
     } catch (error) {}
     try {
       const [substrateA, substrateC, system] = XRDCore.substrateLattice(params);
       substratePeak = XRDCore.braggAngle(substrateA, params.hkl, params.wavelength,
                                          substrateC, system) + params.angle_offset_deg;
+      if (params.substrate_material === "TiO2" && XRDCore.rutileReflectionAbsent(XRDCore.parseHkl(params.hkl))) substratePeak = null;
     } catch (error) {}
     return {angles, intensities, film_peak: filmPeak, substrate_peak: substratePeak};
   }
@@ -237,10 +238,10 @@ window.XRDLocal = (() => {
     if (!(low > 0 && low < high && high < 180)) {
       throw new Error("Fit range must increase within 0–180°");
     }
-    const allowed = new Set(["film_lattice_a", "film_planes", "angle_offset_deg", "fwhm_deg",
+    const allowed = new Set(["film_lattice_a", "film_lattice_c", "film_planes", "angle_offset_deg", "fwhm_deg",
                              "substrate_planes", "background", "film_lattice_gradient_a",
                              "film_interface_width", "film_thickness_sigma", "background_slope",
-                             "resolution_halo_fraction", "resolution_halo_width"]);
+                             "resolution_halo_fraction", "resolution_halo_width", "film_intensity_scale"]);
     if (!fit.bounds || typeof fit.bounds !== "object" || Array.isArray(fit.bounds)) {
       throw new Error("fit.bounds must be an object");
     }
@@ -252,16 +253,18 @@ window.XRDLocal = (() => {
       if (!Array.isArray(interval) || interval.length !== 2) {
         throw new Error(`${key} bounds need [minimum, maximum]`);
       }
-      const minimum = numeric(interval[0], `${key} minimum`, key.startsWith("resolution_halo_"));
-      const maximum = numeric(interval[1], `${key} maximum`, key.startsWith("resolution_halo_"));
+      const minimum = numeric(interval[0], `${key} minimum`, (key.startsWith("resolution_halo_") || ["film_intensity_scale", "film_lattice_c"].includes(key)));
+      const maximum = numeric(interval[1], `${key} maximum`, (key.startsWith("resolution_halo_") || ["film_intensity_scale", "film_lattice_c"].includes(key)));
       if (minimum >= maximum) throw new Error(`${key} minimum must be less than maximum`);
-      if (key === "film_lattice_a" && minimum <= 0) throw new Error(`${key} minimum must be positive`);
+      if (["film_lattice_a", "film_lattice_c"].includes(key) && minimum <= 0) throw new Error(`${key} minimum must be positive`);
+      if (key === "film_lattice_c" && params.film_system !== "tetragonal") throw new Error("film_lattice_c can only be fitted for tetragonal films");
       if (key === "film_planes" || key === "substrate_planes") {
         const limit = key === "film_planes" ? 20000 : 30000;
         if (!Number.isInteger(minimum) || !Number.isInteger(maximum) || minimum < 0 || maximum > limit) {
           throw new Error(`${key} bounds must be integers from 0 to ${limit.toLocaleString("en")}`);
         }
       }
+      if (key === "film_intensity_scale" && !(minimum >= 0 && maximum <= 100)) throw new Error("film_intensity_scale bounds must be in [0,100]");
       if (key === "fwhm_deg" && minimum < 0) throw new Error("fwhm_deg minimum must be nonnegative");
       if (key === "resolution_halo_fraction" && !(minimum >= 0 && maximum <= 0.2)) {
         throw new Error("resolution_halo_fraction bounds must be in [0,0.2]");
@@ -285,8 +288,8 @@ window.XRDLocal = (() => {
       bounds[key] = [minimum, maximum];
     }
     const budget = numeric(fit.max_evaluations === undefined ? 400 : fit.max_evaluations, "max_evaluations");
-    if (!Number.isInteger(budget) || budget < 50 || budget > 1200) {
-      throw new Error("max_evaluations must be an integer from 50 to 1,200");
+    if (!Number.isInteger(budget) || budget < 50 || budget > 6000) {
+      throw new Error("max_evaluations must be an integer from 50 to 6,000");
     }
     let thicknessBoundsNm = null;
     if ("thickness_bounds_nm" in fit) {
@@ -349,9 +352,9 @@ window.XRDLocal = (() => {
     if (method === "GET" && route.pathname === "/api/catalogue") {
       return {substrates: Object.entries(catalogue.substrates).map(([id, entry]) => ({
         id, label: entry.label, system: entry.system, a: entry.a, c: entry.c ?? entry.a,
-        modelled: entry.basis === "perovskite", suggest: entry.suggest || "001",
+        modelled: ["perovskite", "rutile"].includes(entry.basis), basis: entry.basis, suggest: entry.suggest || "001",
         centering: entry.centering || "P", note: entry.note || ""
-      })), films: Object.keys(catalogue.film_sites), common_hkl: catalogue.common_hkl};
+      })), films: XRDCore.filmCatalogue().map(film => film.id), film_catalogue: XRDCore.filmCatalogue(), common_hkl: catalogue.common_hkl};
     }
     if (method === "GET" && route.pathname === "/api/sample") {
       const bytes = new Uint8Array(await (await fetch(new URL("sample_data.dat", scriptUrl))).arrayBuffer());
@@ -378,6 +381,8 @@ window.XRDLocal = (() => {
     let request;
     try { request = JSON.parse(options.body); }
     catch (error) { throw new Error("Invalid JSON request"); }
+    if (route.pathname === "/api/fringes") return XRDFringes.estimate(request);
+    if (route.pathname === "/api/peaks") return XRDPeaks.analyzePeaks(request);
     if (route.pathname === "/api/simulate") return simulate(request, catalogue);
     if (route.pathname === "/api/fit") return runFit(fitRequest(request, catalogue));
     if (route.pathname === "/api/fit/cancel") {

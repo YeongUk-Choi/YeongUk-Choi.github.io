@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="styles.css">
   <script src="xrd_core.js" defer></script>
   <script src="xrd_fit.js" defer></script>
+  <script src="xrd_fringes.js" defer></script>
+  <script src="xrd_peaks.js" defer></script>
   <script src="xrd_local.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -21,7 +23,7 @@
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
         <div>
           <div class="brand-title">XRD <strong>STUDIO</strong></div>
-          <p>Perovskite / SrTiO₃ · 대칭 θ–2θ 피팅 및 시뮬레이션</p>
+          <p>박막 / 기판 · 대칭 θ–2θ 피팅 및 시뮬레이션</p>
         </div>
       </div>
       <div class="head-actions" aria-label="파일 작업">
@@ -61,10 +63,16 @@
               <select id="film_material" name="film_material">
                 <option>SrRuO3</option><option>SrTiO3</option><option>BaTiO3</option>
                 <option>LaAlO3</option><option>LaMnO3</option><option>LaNiO3</option><option>SrVO3</option>
+                <option value="VO2">VO₂ (rutile R)</option><option value="TiO2">TiO₂ (rutile)</option>
               </select>
             </label>
           </div>
           <p class="small-note" id="substrateNote"></p>
+          <div class="field-grid two">
+            <label class="field">박막 결정계<select id="film_system"><option value="cubic">입방</option><option value="tetragonal">정방</option></select></label>
+            <label class="field">박막 구조 인자<select id="film_basis"><option value="perovskite">ABO₃</option><option value="rutile">루틸</option><option value="lattice">유효 격자</option></select></label>
+          </div>
+          <p class="small-note" id="filmNote"></p>
           <div class="field-grid two">
             <label class="field">반사 (hkl)
               <input id="hkl" name="hkl" type="text" inputmode="text" autocomplete="off" spellcheck="false" value="110" required>
@@ -72,18 +80,21 @@
             </label>
             <label class="field">박막 평균 격자상수 <span>a (Å)</span><input id="film_lattice_a" name="film_lattice_a" type="number" step="any" value="3.93" required></label>
           </div>
+          <label class="field" id="filmCField" hidden>박막 평균 격자상수 <span>c (Å) · 0 = a</span><input id="film_lattice_c" name="film_lattice_c" type="number" step="any" min="0" value="0" required></label>
           <div class="field-grid two">
             <label class="field">Thickness <span>(nm)</span><input id="film_thickness_nm" name="film_thickness_nm" type="number" step="any" min="0" value="16.67358" required><span class="thickness-conversion" id="filmThicknessQuantization">모델 반복 단위 N = 60</span></label>
-            <label class="field">박막 수직 격자 구배 Δa <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
+            <label class="field"><span id="filmGradientName">박막 수직 격자 구배 Δa</span> <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
             <label class="field">기판 격자상수 <span>a (Å)</span><input id="substrate_lattice_a" name="substrate_lattice_a" type="number" step="any" value="3.905" required></label>
             <label class="field" id="substrateCField" hidden>기판 c축 <span>c (Å)</span><input id="substrate_lattice_c" name="substrate_lattice_c" type="number" step="any" min="0" value="0"></label>
             <label class="field">기판 유효 간섭 반복 수<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
           </div>
-          <p class="small-note">Δa = 표면 a − 계면 a입니다. 모델의 반사면 법선 방향 유효 격자 간격이 선형으로 변한다고 가정하며, Thickness는 평균 a로 환산합니다.</p>
+          <p class="small-note" id="filmGradientNote">Δa = 표면 a − 계면 a입니다. 반사면 법선 간격의 선형 변화를 가정합니다. Thickness는 평균 격자와 hkl로 환산합니다.</p>
           <div class="field-grid two">
             <label class="field">박막 경계 테이퍼 폭 w <span>(반복 단위)</span><input id="film_interface_width" name="film_interface_width" type="number" step="any" min="0" max="1000" value="0" required></label>
             <label class="field">박막 두께 분포 σN <span>(반복 단위)</span><input id="film_thickness_sigma" name="film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" required></label>
           </div>
+          <label class="field">박막 상대 강도 배율<input id="film_intensity_scale" name="film_intensity_scale" type="number" step="any" min="0" max="100" value="1" required></label>
+          <p class="small-note">박막 산란 진폭에 √배율을 곱한 뒤 기판 진폭과 합칩니다. 1은 기준값, 0은 박막 산란 없음입니다. 경험적 상대 강도 조절이며 흡수·체적 분율·거칠기를 개별적으로 측정하거나 구별하지 않습니다.</p>
           <p class="small-note">w는 박막 양 끝의 산란 진폭을 완만하게 줄이는 경험적 테이퍼 폭입니다. σN은 서로 비간섭인 면내 영역들의 정수 두께 분포이며 강도를 평균합니다. 둘 다 0이면 기존 모델입니다. 두 값은 거칠기를 직접 측정한 값이 아니며, 먼저 하나씩 켜서 비교하세요. σN을 켜면 계산 시간이 늘어납니다.</p>
         </fieldset>
 
@@ -136,14 +147,18 @@
               <label class="fit-toggle"><input id="fit_enable_film_lattice_a" type="checkbox" checked><span>박막 평균 격자상수 a <small>Å</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_lattice_a" type="number" step="any" value="3.7" aria-label="박막 격자상수 하한"><span>–</span><input id="fit_high_film_lattice_a" type="number" step="any" value="4.15" aria-label="박막 격자상수 상한"></div>
             </div>
+            <div class="fit-variable" data-fit-key="film_lattice_c" hidden>
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_c" type="checkbox"><span>박막 평균 격자상수 c <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_c" type="number" step="any" value="2.5" aria-label="박막 c축 하한"><span>–</span><input id="fit_high_film_lattice_c" type="number" step="any" value="3.2" aria-label="박막 c축 상한"></div>
+            </div>
             <div class="fit-variable" data-fit-key="film_lattice_gradient_a">
-              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span>박막 수직 격자 구배 Δa <small>Å</small></span></label>
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span><span id="fitGradientName">박막 수직 격자 구배 Δa</span> <small>Å</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="-0.10" aria-label="박막 수직 격자 구배 하한"><span>–</span><input id="fit_high_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0.10" aria-label="박막 수직 격자 구배 상한"></div>
             </div>
             <div class="fit-variable" data-fit-key="film_planes">
               <label class="fit-toggle"><input id="fit_enable_film_planes" type="checkbox" checked><span>Thickness <small>nm</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_planes" type="number" step="any" min="0" value="1.3" aria-label="Thickness 하한 (nm)"><span>–</span><input id="fit_high_film_planes" type="number" step="any" min="0" value="140" aria-label="Thickness 상한 (nm)"></div>
-              <div class="fit-conversion-note" id="fitThicknessBoundNote">현재 a·hkl 기준 반복 단위 N 범위로 환산됩니다.</div>
+              <div class="fit-conversion-note" id="fitThicknessBoundNote">현재 격자·hkl 기준 반복 단위 N 범위로 환산됩니다.</div>
             </div>
             <div class="fit-variable" data-fit-key="angle_offset_deg">
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ 영점 보정 <small>°</small></span></label>
@@ -152,6 +167,10 @@
             <div class="fit-variable" data-fit-key="film_thickness_sigma">
               <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>박막 두께 분포 σN <small>반복 단위</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="박막 두께 분포 하한"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="박막 두께 분포 상한"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_intensity_scale">
+              <label class="fit-toggle"><input id="fit_enable_film_intensity_scale" type="checkbox"><span>박막 상대 강도 배율</span></label>
+              <div class="fit-bounds"><input id="fit_low_film_intensity_scale" type="number" step="any" min="0" max="100" value="0" aria-label="박막 강도 배율 하한"><span>–</span><input id="fit_high_film_intensity_scale" type="number" step="any" min="0" max="100" value="10" aria-label="박막 강도 배율 상한"></div>
             </div>
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>기구 Gaussian FWHM <small>°</small></span></label>
@@ -187,9 +206,9 @@
             <p class="fit-hint">기준 SRO/STO 002 스캔에서는 테이퍼 폭이 0으로 수렴했습니다. 켜기 전에 근거를 확인하세요.</p>
           </details>
           <p class="fit-hint">경계 테이퍼 w와 두께 분포 σN은 서로 비슷한 변화를 만들 수 있습니다. 각각 따로 피팅해 구간별 잔차를 비교한 다음 함께 쓸지 판단하세요. 점수 개선만으로 원인을 확정할 수 없습니다.</p>
-          <p class="fit-hint">선택한 변수의 현재값이 경계 밖이면 가장 가까운 경계에서 피팅을 시작합니다. Thickness는 평균 a·hkl로 정수 반복 단위 N에 환산됩니다. Δa는 기본적으로 고정되며 피팅을 켜도 독립적으로 측정된 strain을 뜻하지 않습니다. 기판 반복 수는 최대 30,000까지 입력할 수 있지만 넓은 계산 스캔에서는 적분 한계에 닿을 수 있습니다. 기구 FWHM은 측정 피크의 전체 반치폭과 다릅니다. 반사면, 파장, 재료 배정은 사용자가 정하는 가정입니다.</p>
+          <p class="fit-hint">선택한 변수의 현재값이 경계 밖이면 가장 가까운 경계에서 피팅을 시작합니다. Thickness는 전체 격자·hkl로 정수 반복 단위 N에 환산됩니다. 격자 구배는 기본적으로 고정되며 피팅을 켜도 독립적으로 측정된 strain을 뜻하지 않습니다. 기판 반복 수는 최대 30,000까지 입력할 수 있지만 넓은 계산 스캔에서는 적분 한계에 닿을 수 있습니다. 기구 FWHM은 측정 피크의 전체 반치폭과 다릅니다. 반사면, 파장, 재료 배정은 사용자가 정하는 가정입니다.</p>
           <label class="field fit-budget">탐색 예산
-            <select id="fit_evaluations"><option value="400" selected>기본 · 최대 400회 평가</option><option value="800">정밀 · 최대 800회 평가</option><option value="1200">확대 · 최대 1,200회 평가</option></select>
+            <select id="fit_evaluations"><option value="400" selected>기본 · 최대 400회 평가</option><option value="800">정밀 · 최대 800회 평가</option><option value="1200">확대 · 최대 1,200회 평가</option><option value="3000">장시간 · 최대 3,000회 평가</option><option value="6000">장시간 · 최대 6,000회 평가</option></select>
           </label>
           <button class="button fit-action" id="runFit" type="button"><span class="fit-spinner" aria-hidden="true"></span> 측정 데이터 자동 피팅</button>
           <button class="button outline fit-cancel" id="cancelFit" type="button" hidden>피팅 중단</button>
@@ -217,7 +236,7 @@
       <div class="metrics" aria-label="주요 결과">
         <div class="metric-card observed"><div class="metric-label">측정 주 피크 <span>표시 구간</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">최고 원본 강도 위치</div></div>
         <div class="metric-card substrate"><div class="metric-label">기판 예상 피크</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">입력 구조에 따른 Bragg 위치</div></div>
-        <div class="metric-card film"><div class="metric-label">박막 예상 피크</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">평균 a에 따른 Bragg 위치</div></div>
+        <div class="metric-card film"><div class="metric-label">박막 예상 피크</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">평균 격자에 따른 Bragg 위치</div></div>
         <div class="metric-card error"><div class="metric-label">화면 로그 RMSE <span>표시 구간</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">현재 그래프 범위 기준</div></div>
       </div>
 
@@ -226,7 +245,8 @@
         <p class="fit-stale" id="fitStale" hidden>설정이 변경되었습니다. 아래 값은 이전 피팅 결과입니다. 변경한 설정으로 피팅을 다시 실행하세요.</p>
         <div class="fit-result-grid">
           <div><span id="fitThicknessLabel">Thickness (피팅값)</span><strong id="fitThickness">—</strong></div>
-          <div><span>박막 평균 a</span><strong id="fitLattice">—</strong></div>
+          <div><span id="fitLatticeLabel">박막 평균 a</span><strong id="fitLattice">—</strong></div>
+          <div id="fitOtherLatticeField" hidden><span id="fitOtherLatticeLabel">박막 c</span><strong id="fitOtherLattice">—</strong></div>
           <div><span id="fitGradientLabel">박막 수직 격자 구배 Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">반복 단위 N (피팅)</span><strong id="fitPlanes">—</strong></div>
           <div><span>기구 Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
@@ -234,6 +254,7 @@
           <div><span>넓은 분해능 성분 폭 배수 m</span><strong id="fitHaloWidth">—</strong></div>
           <div><span>박막 경계 테이퍼 폭 w</span><strong id="fitInterfaceWidth">—</strong></div>
           <div><span>박막 두께 분포 σN</span><strong id="fitThicknessSigma">—</strong></div>
+          <div><span>박막 상대 강도 배율</span><strong id="fitFilmScale">—</strong></div>
           <div><span>로그 배경 기울기</span><strong id="fitBackgroundSlope">—</strong></div>
           <div><span>편광·조사 길이 가정</span><strong id="fitLpMode">—</strong></div>
           <div><span>피크 반치폭 · 측정 → 계산</span><strong id="fitPeakFwhm">—</strong></div>
@@ -242,7 +263,7 @@
         <p id="fitResultDetails">—</p>
         <p id="fitMerit" class="fit-merit" hidden></p>
         <div class="fit-warning" id="fitWarning" hidden></div>
-        <p class="fit-result-note">Thickness는 평균 a와 선택한 hkl의 단일 박막/기판 모델값입니다. Δa는 계면→표면 유효 격자 간격의 선형 변화이며 독립적으로 측정된 strain이 아닙니다. 피크 반치폭은 박막·기판 간섭까지 포함한 측정/계산 패턴의 폭이며 기구 Gaussian FWHM과 다릅니다. 반사면·파장·재료 배정이 달라지면 결과도 달라집니다. 최적화가 전역 최적값을 보장하지 않으므로 초기값·경계·탐색 예산을 바꿔 재실행해 확인하세요.</p>
+        <p class="fit-result-note">Thickness는 평균 격자와 선택한 hkl의 단일 박막/기판 모델값입니다. 격자 구배는 계면→표면 유효 격자 간격의 선형 변화이며 독립적으로 측정된 strain이 아닙니다. 피크 반치폭은 박막·기판 간섭까지 포함한 측정/계산 패턴의 폭이며 기구 Gaussian FWHM과 다릅니다. 반사면·파장·재료 배정이 달라지면 결과도 달라집니다. 최적화가 전역 최적값을 보장하지 않으므로 초기값·경계·탐색 예산을 바꿔 재실행해 확인하세요.</p>
       </section>
 
       <section class="chart-card" aria-labelledby="chart-title">
@@ -283,6 +304,46 @@
         <p class="residual-note" id="residualNote">표시된 전체 계산 곡선을 측정 각도에 보간한 진단입니다. 피팅 최적화 점수와 값이 다를 수 있습니다.</p>
       </section>
 
+      <section class="fringe-card" id="fringeCard" aria-labelledby="fringe-title">
+        <div class="residual-heading"><div><div class="eyebrow blue">MEASURED FRINGES</div><h3 id="fringe-title">프린지 간격으로 두께 비교</h3></div><button class="button outline" id="fringeUseVisible" type="button">현재 그래프 범위 사용</button></div>
+        <p class="residual-explanation">기판 주 피크를 피하고 반복 무늬가 보이는 측정 구간을 지정하세요. q = 4π sinθ/λ, 두께 = 2π/Δq를 사용합니다. 입력한 파장에 비례해 추정 두께가 변합니다. 피팅 목적함수는 바꾸지 않습니다.</p>
+        <div class="field-grid two fringe-roi">
+          <label class="field">프린지 구간 시작 (2θ, °)<input id="fringe_min" type="number" step="any" placeholder="—"></label>
+          <label class="field">프린지 구간 끝 (2θ, °)<input id="fringe_max" type="number" step="any" placeholder="—"></label>
+        </div>
+        <details class="fringe-manual"><summary>최대점 각도 직접 입력 (선택)</summary><label class="field">최대점 2θ (°)<textarea id="fringe_manual_peaks" rows="2" placeholder="40.20, 40.48, 40.76, 41.04"></textarea></label><label class="field">각 최대점의 정수 차수 (선택)<input id="fringe_manual_orders" type="text" placeholder="-3, -2, 2, 3"></label><p class="small-note">각도 빈칸은 자동 검출이며 연속 차수를 가정합니다. 수동 최대점은 4개 이상을 작은 순서로 쓰세요. 차수는 각 최대점에 하나씩 대응하며, 중앙 차수를 건너뛸 수 있습니다. 차수 빈칸은 0, 1, 2, …로 처리합니다. 잘못된 차수나 다른 피크를 섞으면 두께가 틀릴 수 있습니다.</p></details>
+        <button class="button outline" id="estimateFringes" type="button">측정 프린지 평가</button>
+        <p class="fringe-status" id="fringeStatus" role="status" aria-live="polite">아직 추정하지 않았습니다. 반복 무늬가 보이는 측정 구간을 지정하세요.</p>
+        <div id="fringeResult" hidden>
+          <div class="fringe-values"><div><span>프린지 두께</span><strong id="fringeThickness">—</strong></div><div><span>각도 잔차 RMS</span><strong id="fringeAngleResidual">—</strong></div><div><span id="fringeModelLabel">현재 모델 두께 (환산값)</span><strong id="fringeModelThickness">—</strong></div><div><span>상대 차이</span><strong id="fringeDifference">—</strong></div></div>
+          <p class="residual-note" id="fringeQuality"></p><details><summary>사용한 최대점과 차수</summary><div class="fringe-peaks peak-table-wrap" id="fringePeaks"></div></details>
+          <p class="residual-note">상대 차이는 |모델 두께 − 프린지 두께| / 프린지 두께입니다. 각도 잔차 RMS와 차수당 q 간격 산포는 두께의 신뢰 구간이 아니며 1% 정확도를 보장하지 않습니다. 입력 파장과 영점 보정, 차수 배정을 함께 확인하세요.</p>
+          <p class="fringe-warning" id="fringeWarning" hidden></p>
+        </div>
+      </section>
+
+      <section class="fringe-card peak-card" id="peakCard" aria-labelledby="peak-title">
+        <div class="residual-heading"><div><div class="eyebrow blue">DESCRIPTIVE PEAKS</div><h3 id="peak-title">피크 모양 분해</h3></div><button class="button outline" id="peakUseVisible" type="button">현재 그래프 범위 사용</button></div>
+        <p class="residual-explanation">선택 구간을 1개 또는 2개의 pseudo-Voigt 성분과 선형 배경으로 기술합니다. pseudo-Voigt는 Gaussian과 Lorentzian을 섞은 피크 모양입니다. 이것은 물리적인 다층 모델이 아니며 위의 박막 시뮬레이션을 바꾸지 않습니다.</p>
+        <div class="field-grid three peak-inputs">
+          <label class="field">분석 구간 시작 (2θ, °)<input id="peak_min" type="number" step="any" placeholder="—"></label>
+          <label class="field">분석 구간 끝 (2θ, °)<input id="peak_max" type="number" step="any" placeholder="—"></label>
+          <label class="field">피크 성분 수<select id="peak_count"><option value="1">1</option><option value="2" selected>2</option></select></label>
+        </div>
+        <details class="fringe-manual"><summary>별도 기준 피크로 환산 (선택)</summary><div class="field-grid two"><label class="field">관측된 기준 피크 2θ (°)<input id="peak_reference_center" type="number" step="any" placeholder="—"></label><label class="field">기준 면간 거리 d (Å)<input id="peak_reference_d" type="number" step="any" min="0" placeholder="—"></label></div><p class="small-note">확인한 기준 피크와 면간 거리를 직접 입력하세요. 물질이나 반사를 자동 가정하지 않습니다. 두 피크에 같은 영점 보정이 적용된다고 가정한 Bragg 비율 환산이며, 입력 파장으로 구한 값과 별도로 표시합니다.</p></details>
+        <button class="button outline" id="fitPeaks" type="button">피크 모양 분석</button>
+        <p class="fringe-status" id="peakStatus" role="status" aria-live="polite">아직 분석하지 않았습니다. 피크가 포함된 측정 구간을 지정하세요.</p>
+        <div id="peakResult" hidden>
+          <p class="residual-note">회색: 측정 · 파랑: soft-log 분석 · 주황: 선형 오차 분석 · 로그 상대 강도 (최댓값 1)</p>
+          <svg id="peakPlot" role="img" aria-label="측정 강도와 피크 모양 분해 비교"></svg>
+          <p class="residual-note">같은 구간·프로파일을 soft-log와 선형 오차로 각각 피팅합니다. 중심 차이는 방법에 따른 변동이며 통계적 신뢰 구간이 아닙니다. 성분은 중심 각도가 낮은 순서로 대응합니다. 한 방법이라도 전체 면적 비율이 15% 미만이면 약하게 결정된 프로파일 성분으로 표시합니다. 작은 성분은 프린지와 겹칠 수 있고 상 배정은 알 수 없습니다. 비영 면적만으로 별도 피크가 검출됐다고 판단하지 않습니다. 관측된 약한 특징도 독립된 Bragg 성분인지는 별도 확인이 필요합니다.</p>
+          <div class="peak-table-wrap"><table class="peak-table"><thead><tr><th>성분</th><th>soft-log 중심 (°)</th><th>선형 중심 (°)</th><th>|중심 차이| (°)</th><th>soft-log c (Å)</th><th>선형 c (Å)</th><th>soft-log 면적 비율</th><th>선형 면적 비율</th><th>성분 해석</th></tr></thead><tbody id="peakComparison"></tbody></table></div>
+          <details><summary>각 방법의 폭·면적·환산값</summary><div class="peak-table-wrap"><table class="peak-table"><thead><tr><th>방법</th><th>성분</th><th>중심 2θ (°)</th><th>λ 기준 d (Å)</th><th>λ 기준 00l 환산 c (Å)</th><th>FWHM (°)</th><th>적분 면적 (강도·°)</th><th>전체 면적 비율</th><th>구간 면적 비율</th><th>Lorentz 비율 η</th><th id="peakReferenceDHeader" hidden>기준 보정 d (Å)</th><th id="peakReferenceCHeader" hidden>기준 보정 00l 환산 c (Å)</th></tr></thead><tbody id="peakComponents"></tbody></table></div></details>
+          <p class="residual-note" id="peakMetrics"></p><p class="fringe-warning" id="peakWarnings" hidden></p>
+          <p class="residual-note">d는 입력 파장·영점 보정과 피크 중심으로 환산합니다. c는 입력 반사가 00l일 때 |l|d로 환산한 값이며 상이나 구조의 증거가 아닙니다. 면적 비율은 두 성분의 적분 강도 비율입니다. 전체 면적에는 구간 밖 꼬리도 포함되고 구간 면적은 선택 구간 안의 적분만 사용합니다. 체적·상 분율·깊이 비율이 아닙니다. 공간 배치가 정해지지 않았으므로 균일 박막·두 층·면내 영역 중 하나로 단정할 수 없습니다.</p>
+        </div>
+      </section>
+
       <div class="info-grid">
         <section class="info-card" aria-labelledby="assumptions-title">
           <div class="info-icon" aria-hidden="true">i</div>
@@ -290,7 +351,7 @@
         </section>
         <section class="info-card" aria-labelledby="model-title">
           <div class="info-icon" aria-hidden="true">∑</div>
-          <div><h3 id="model-title">모델 범위</h3><p>단일 ABO₃ 박막 + 기판의 1차원 kinematic 간섭 모델입니다. 기판은 목록에서 고르거나 격자상수를 직접 입력합니다. 반복 수와 격자상수의 경향을 살펴보는 용도이며, 동역학적 회절·Cu Kα 이중선·절대 강도 보정은 포함하지 않습니다.</p></div>
+          <div><h3 id="model-title">모델 범위</h3><p>단일 박막 + 기판의 1차원 kinematic 간섭 모델입니다. ABO₃·루틸 원자 기저 또는 유효 격자를 선택합니다. 기판은 목록에서 고르거나 격자상수를 직접 입력합니다. 반복 수와 격자상수의 경향을 살펴보는 용도이며, 동역학적 회절·Cu Kα 이중선·절대 강도 보정은 포함하지 않습니다.</p></div>
         </section>
       </div>
       <div class="status" id="status" role="status" aria-live="polite">예시 데이터를 불러오는 중입니다.</div>

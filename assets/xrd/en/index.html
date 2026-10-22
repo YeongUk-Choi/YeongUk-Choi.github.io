@@ -10,6 +10,8 @@
 <link rel="stylesheet" href="../styles.css">
   <script src="../xrd_core.js" defer></script>
   <script src="../xrd_fit.js" defer></script>
+  <script src="../xrd_fringes.js" defer></script>
+  <script src="../xrd_peaks.js" defer></script>
   <script src="../xrd_local.js" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -21,7 +23,7 @@
         <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
         <div>
           <div class="brand-title">XRD <strong>STUDIO</strong></div>
-          <p>Perovskite / SrTiO₃ · symmetric θ–2θ fitting and simulation</p>
+          <p>Thin film / substrate · symmetric θ–2θ fitting and simulation</p>
         </div>
       </div>
       <div class="head-actions" aria-label="File actions">
@@ -61,10 +63,16 @@
               <select id="film_material" name="film_material">
                 <option>SrRuO3</option><option>SrTiO3</option><option>BaTiO3</option>
                 <option>LaAlO3</option><option>LaMnO3</option><option>LaNiO3</option><option>SrVO3</option>
+                <option value="VO2">VO₂ (rutile R)</option><option value="TiO2">TiO₂ (rutile)</option>
               </select>
             </label>
           </div>
           <p class="small-note" id="substrateNote"></p>
+          <div class="field-grid two">
+            <label class="field">Film crystal system<select id="film_system"><option value="cubic">cubic</option><option value="tetragonal">tetragonal</option></select></label>
+            <label class="field">Film structure factor<select id="film_basis"><option value="perovskite">ABO₃</option><option value="rutile">Rutile</option><option value="lattice">Effective lattice</option></select></label>
+          </div>
+          <p class="small-note" id="filmNote"></p>
           <div class="field-grid two">
             <label class="field">Reflection (hkl)
               <input id="hkl" name="hkl" type="text" inputmode="text" autocomplete="off" spellcheck="false" value="110" required>
@@ -72,18 +80,21 @@
             </label>
             <label class="field">Film mean lattice constant <span>a (Å)</span><input id="film_lattice_a" name="film_lattice_a" type="number" step="any" value="3.93" required></label>
           </div>
+          <label class="field" id="filmCField" hidden>Film mean lattice constant <span>c (Å) · 0 = a</span><input id="film_lattice_c" name="film_lattice_c" type="number" step="any" min="0" value="0" required></label>
           <div class="field-grid two">
             <label class="field">Thickness <span>(nm)</span><input id="film_thickness_nm" name="film_thickness_nm" type="number" step="any" min="0" value="16.67358" required><span class="thickness-conversion" id="filmThicknessQuantization">model repeats N = 60</span></label>
-            <label class="field">Film out-of-plane lattice gradient Δa <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
+            <label class="field"><span id="filmGradientName">Film out-of-plane lattice gradient Δa</span> <span>(Å)</span><input id="film_lattice_gradient_a" name="film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0" required></label>
             <label class="field">Substrate lattice constant <span>a (Å)</span><input id="substrate_lattice_a" name="substrate_lattice_a" type="number" step="any" value="3.905" required></label>
             <label class="field" id="substrateCField" hidden>Substrate c axis <span>c (Å)</span><input id="substrate_lattice_c" name="substrate_lattice_c" type="number" step="any" min="0" value="0"></label>
             <label class="field">Substrate coherent repeats<input id="substrate_planes" name="substrate_planes" type="number" step="1" min="0" max="30000" value="10000" required></label>
           </div>
-          <p class="small-note">Δa = surface a − interface a. The model assumes the effective lattice spacing along the reflection normal changes linearly, and the thickness is converted using the mean a.</p>
+          <p class="small-note" id="filmGradientNote">Δa = surface a − interface a. The normal spacing is assumed to vary linearly. Thickness uses the mean lattice and hkl.</p>
           <div class="field-grid two">
             <label class="field">Film boundary taper width w <span>(repeats)</span><input id="film_interface_width" name="film_interface_width" type="number" step="any" min="0" max="1000" value="0" required></label>
             <label class="field">Film thickness spread σN <span>(repeats)</span><input id="film_thickness_sigma" name="film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" required></label>
           </div>
+          <label class="field">Film relative intensity scale<input id="film_intensity_scale" name="film_intensity_scale" type="number" step="any" min="0" max="100" value="1" required></label>
+          <p class="small-note">The film scattering amplitude is multiplied by √scale before adding the substrate amplitude. 1 is the reference; 0 removes film scattering. This empirical relative intensity control does not separately measure or distinguish absorption, volume fraction or roughness.</p>
           <p class="small-note">w is an empirical taper width that smoothly reduces the scattering amplitude at both film boundaries. σN describes a discrete thickness distribution across mutually incoherent lateral regions; their intensities are averaged. Both zero retains the original model. Neither directly measures roughness. Compare them one at a time first. Enabling σN increases calculation time.</p>
         </fieldset>
 
@@ -136,14 +147,18 @@
               <label class="fit-toggle"><input id="fit_enable_film_lattice_a" type="checkbox" checked><span>Film mean lattice constant a <small>Å</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_lattice_a" type="number" step="any" value="3.7" aria-label="film lattice constant lower bound"><span>–</span><input id="fit_high_film_lattice_a" type="number" step="any" value="4.15" aria-label="film lattice constant upper bound"></div>
             </div>
+            <div class="fit-variable" data-fit-key="film_lattice_c" hidden>
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_c" type="checkbox"><span>Film mean lattice constant c <small>Å</small></span></label>
+              <div class="fit-bounds"><input id="fit_low_film_lattice_c" type="number" step="any" value="2.5" aria-label="Film c lower bound"><span>–</span><input id="fit_high_film_lattice_c" type="number" step="any" value="3.2" aria-label="Film c upper bound"></div>
+            </div>
             <div class="fit-variable" data-fit-key="film_lattice_gradient_a">
-              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span>Film out-of-plane lattice gradient Δa <small>Å</small></span></label>
+              <label class="fit-toggle"><input id="fit_enable_film_lattice_gradient_a" type="checkbox"><span><span id="fitGradientName">Film out-of-plane lattice gradient Δa</span> <small>Å</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="-0.10" aria-label="film lattice gradient lower bound"><span>–</span><input id="fit_high_film_lattice_gradient_a" type="number" step="any" min="-0.2" max="0.2" value="0.10" aria-label="film lattice gradient upper bound"></div>
             </div>
             <div class="fit-variable" data-fit-key="film_planes">
               <label class="fit-toggle"><input id="fit_enable_film_planes" type="checkbox" checked><span>Thickness <small>nm</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_planes" type="number" step="any" min="0" value="1.3" aria-label="thickness lower bound (nm)"><span>–</span><input id="fit_high_film_planes" type="number" step="any" min="0" value="140" aria-label="thickness upper bound (nm)"></div>
-              <div class="fit-conversion-note" id="fitThicknessBoundNote">Converted to a repeat-count range using the current a and hkl.</div>
+              <div class="fit-conversion-note" id="fitThicknessBoundNote">Converted to repeat-count bounds from the current lattice and hkl.</div>
             </div>
             <div class="fit-variable" data-fit-key="angle_offset_deg">
               <label class="fit-toggle"><input id="fit_enable_angle_offset_deg" type="checkbox" checked><span>2θ zero offset <small>°</small></span></label>
@@ -152,6 +167,10 @@
             <div class="fit-variable" data-fit-key="film_thickness_sigma">
               <label class="fit-toggle"><input id="fit_enable_film_thickness_sigma" type="checkbox"><span>Film thickness spread σN <small>repeats</small></span></label>
               <div class="fit-bounds"><input id="fit_low_film_thickness_sigma" type="number" step="any" min="0" max="20" value="0" aria-label="Film thickness spread lower bound"><span>–</span><input id="fit_high_film_thickness_sigma" type="number" step="any" min="0" max="20" value="3" aria-label="Film thickness spread upper bound"></div>
+            </div>
+            <div class="fit-variable" data-fit-key="film_intensity_scale">
+              <label class="fit-toggle"><input id="fit_enable_film_intensity_scale" type="checkbox"><span>Film relative intensity scale</span></label>
+              <div class="fit-bounds"><input id="fit_low_film_intensity_scale" type="number" step="any" min="0" max="100" value="0" aria-label="Film intensity scale lower bound"><span>–</span><input id="fit_high_film_intensity_scale" type="number" step="any" min="0" max="100" value="10" aria-label="Film intensity scale upper bound"></div>
             </div>
             <div class="fit-variable" data-fit-key="fwhm_deg">
               <label class="fit-toggle"><input id="fit_enable_fwhm_deg" type="checkbox"><span>Instrumental Gaussian FWHM <small>°</small></span></label>
@@ -187,9 +206,9 @@
             <p class="fit-hint">The taper width converged to zero for the reference SRO/STO 002 scan. Check the evidence before enabling it.</p>
           </details>
           <p class="fit-hint">Boundary taper w and thickness spread σN can produce similar changes. Fit them separately and compare regional residuals before using both. A better score alone does not establish the cause.</p>
-          <p class="fit-hint">If a selected parameter starts outside its bounds, the fit begins at the nearest bound. Thickness is converted to an integer repeat count N using the mean a and the hkl. Δa is fixed by default, and fitting it does not make it an independently measured strain. The substrate repeat count accepts up to 30,000, but a wide calculation scan can reach the integration limit. The instrumental FWHM is not the full width of the measured peak. The reflection, the wavelength and the material are assumptions you are making.</p>
+          <p class="fit-hint">If a selected value is outside its bounds, fitting starts at the nearest bound. Thickness is converted to integer repeats N using the full lattice and hkl. The lattice gradient is fixed by default; freeing it does not independently measure strain. Substrate repeats can reach 30,000, but a wide scan may hit the integration limit. Instrumental FWHM differs from the whole measured peak width. Reflection, wavelength and material assignments are your assumptions.</p>
           <label class="field fit-budget">Search budget
-            <select id="fit_evaluations"><option value="400" selected>standard · up to 400 evaluations</option><option value="800">fine · up to 800 evaluations</option><option value="1200">extended · up to 1,200 evaluations</option></select>
+            <select id="fit_evaluations"><option value="400" selected>standard · up to 400 evaluations</option><option value="800">fine · up to 800 evaluations</option><option value="1200">extended · up to 1,200 evaluations</option><option value="3000">long search · up to 3,000 evaluations</option><option value="6000">long search · up to 6,000 evaluations</option></select>
           </label>
           <button class="button fit-action" id="runFit" type="button"><span class="fit-spinner" aria-hidden="true"></span> Fit the measurement</button>
           <button class="button outline fit-cancel" id="cancelFit" type="button" hidden>Stop fitting</button>
@@ -217,7 +236,7 @@
       <div class="metrics" aria-label="Key results">
         <div class="metric-card observed"><div class="metric-label">Measured main peak <span>visible range</span></div><div class="metric-value" id="observedPeak">—</div><div class="metric-hint">position of the highest raw intensity</div></div>
         <div class="metric-card substrate"><div class="metric-label">Expected substrate peak</div><div class="metric-value" id="substratePeak">—</div><div class="metric-hint">Bragg position from the structure you entered</div></div>
-        <div class="metric-card film"><div class="metric-label">Expected film peak</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">Bragg position from the mean a</div></div>
+        <div class="metric-card film"><div class="metric-label">Expected film peak</div><div class="metric-value" id="filmPeak">—</div><div class="metric-hint">Bragg position from mean lattice</div></div>
         <div class="metric-card error"><div class="metric-label">Displayed log RMSE <span>visible range</span></div><div class="metric-value" id="logRmse">—</div><div class="metric-hint">over the current chart range</div></div>
       </div>
 
@@ -226,7 +245,8 @@
         <p class="fit-stale" id="fitStale" hidden>The settings have changed. The values below are from the previous fit — run the fit again with the new settings.</p>
         <div class="fit-result-grid">
           <div><span id="fitThicknessLabel">Thickness (fitted)</span><strong id="fitThickness">—</strong></div>
-          <div><span>Film mean a</span><strong id="fitLattice">—</strong></div>
+          <div><span id="fitLatticeLabel">Film mean a</span><strong id="fitLattice">—</strong></div>
+          <div id="fitOtherLatticeField" hidden><span id="fitOtherLatticeLabel">Film c</span><strong id="fitOtherLattice">—</strong></div>
           <div><span id="fitGradientLabel">Film out-of-plane lattice gradient Δa</span><strong id="fitGradient">—</strong><small id="fitGradientEndpoints">—</small></div>
           <div><span id="fitPlanesLabel">Repeats N (fitted)</span><strong id="fitPlanes">—</strong></div>
           <div><span>Instrumental Gaussian FWHM</span><strong id="fitFwhm">—</strong></div>
@@ -234,6 +254,7 @@
           <div><span>Broad resolution component width multiplier m</span><strong id="fitHaloWidth">—</strong></div>
           <div><span>Film boundary taper width w</span><strong id="fitInterfaceWidth">—</strong></div>
           <div><span>Film thickness spread σN</span><strong id="fitThicknessSigma">—</strong></div>
+          <div><span>Film relative intensity scale</span><strong id="fitFilmScale">—</strong></div>
           <div><span>Log background slope</span><strong id="fitBackgroundSlope">—</strong></div>
           <div><span>Polarization / illuminated length</span><strong id="fitLpMode">—</strong></div>
           <div><span>Peak FWHM · measured → calculated</span><strong id="fitPeakFwhm">—</strong></div>
@@ -242,7 +263,7 @@
         <p id="fitResultDetails">—</p>
         <p id="fitMerit" class="fit-merit" hidden></p>
         <div class="fit-warning" id="fitWarning" hidden></div>
-        <p class="fit-result-note">Thickness is a single film-on-substrate model value from the mean a and the chosen hkl. Δa is the linear change in effective lattice spacing from interface to surface, not an independently measured strain. The peak FWHM is the width of the measured and calculated patterns, film and substrate interference included, and is not the instrumental Gaussian FWHM. Different reflection, wavelength or material assignments give different results. The optimisation does not guarantee a global optimum, so change the starting values, the bounds or the search budget and run it again to check.</p>
+        <p class="fit-result-note">Thickness is a single-film/substrate model value from the mean lattice and selected hkl. The lattice gradient is a linear change in effective normal spacing from interface to surface, not independently measured strain. Peak FWHM includes film/substrate interference and differs from instrumental Gaussian FWHM. Results depend on the reflection, wavelength and material assignments. Optimization does not guarantee a global optimum; rerun with different starting values, bounds and budgets.</p>
       </section>
 
       <section class="chart-card" aria-labelledby="chart-title">
@@ -283,6 +304,46 @@
         <p class="residual-note" id="residualNote">A diagnostic from the whole displayed calculated curve interpolated onto the measured angles. These numbers can differ from the optimisation score.</p>
       </section>
 
+      <section class="fringe-card" id="fringeCard" aria-labelledby="fringe-title">
+        <div class="residual-heading"><div><div class="eyebrow blue">MEASURED FRINGES</div><h3 id="fringe-title">Compare thickness from fringe spacing</h3></div><button class="button outline" id="fringeUseVisible" type="button">Use the visible range</button></div>
+        <p class="residual-explanation">Select a measured region with repeating fringes away from the main substrate peak. Uses q = 4π sinθ/λ and thickness = 2π/Δq. Estimated thickness scales with the entered wavelength. This does not change the fitting objective.</p>
+        <div class="field-grid two fringe-roi">
+          <label class="field">Fringe range start (2θ, °)<input id="fringe_min" type="number" step="any" placeholder="—"></label>
+          <label class="field">Fringe range end (2θ, °)<input id="fringe_max" type="number" step="any" placeholder="—"></label>
+        </div>
+        <details class="fringe-manual"><summary>Enter maximum angles manually (optional)</summary><label class="field">Maximum angles 2θ (°)<textarea id="fringe_manual_peaks" rows="2" placeholder="40.20, 40.48, 40.76, 41.04"></textarea></label><label class="field">Integer order for each maximum (optional)<input id="fringe_manual_orders" type="text" placeholder="-3, -2, 2, 3"></label><p class="small-note">Blank angles use automatic detection and assume consecutive orders. Enter at least four increasing manual maxima. Each order corresponds to one maximum; central orders may be skipped. Blank orders mean 0, 1, 2, …. Incorrect orders or unrelated peaks can give the wrong thickness.</p></details>
+        <button class="button outline" id="estimateFringes" type="button">Estimate measured fringes</button>
+        <p class="fringe-status" id="fringeStatus" role="status" aria-live="polite">Not estimated. Select a measured region with visible repeating fringes.</p>
+        <div id="fringeResult" hidden>
+          <div class="fringe-values"><div><span>Fringe thickness</span><strong id="fringeThickness">—</strong></div><div><span>Angular residual RMS</span><strong id="fringeAngleResidual">—</strong></div><div><span id="fringeModelLabel">Current model thickness (converted)</span><strong id="fringeModelThickness">—</strong></div><div><span>Relative difference</span><strong id="fringeDifference">—</strong></div></div>
+          <p class="residual-note" id="fringeQuality"></p><details><summary>Maxima and assigned orders</summary><div class="fringe-peaks peak-table-wrap" id="fringePeaks"></div></details>
+          <p class="residual-note">Relative difference is |model thickness − fringe thickness| / fringe thickness. Angular residual RMS and q-spacing scatter per order are not thickness confidence intervals and do not establish 1% accuracy. Check the wavelength, zero offset and order assignments.</p>
+          <p class="fringe-warning" id="fringeWarning" hidden></p>
+        </div>
+      </section>
+
+      <section class="fringe-card peak-card" id="peakCard" aria-labelledby="peak-title">
+        <div class="residual-heading"><div><div class="eyebrow blue">DESCRIPTIVE PEAKS</div><h3 id="peak-title">Peak-shape decomposition</h3></div><button class="button outline" id="peakUseVisible" type="button">Use the visible range</button></div>
+        <p class="residual-explanation">Describe the selected range with one or two pseudo-Voigt components and a linear background. A pseudo-Voigt mixes Gaussian and Lorentzian peak shapes. This is not a physical multilayer model and does not change the film simulation above.</p>
+        <div class="field-grid three peak-inputs">
+          <label class="field">Analysis start (2θ, °)<input id="peak_min" type="number" step="any" placeholder="—"></label>
+          <label class="field">Analysis end (2θ, °)<input id="peak_max" type="number" step="any" placeholder="—"></label>
+          <label class="field">Peak components<select id="peak_count"><option value="1">1</option><option value="2" selected>2</option></select></label>
+        </div>
+        <details class="fringe-manual"><summary>Convert using a separate reference peak (optional)</summary><div class="field-grid two"><label class="field">Observed reference peak 2θ (°)<input id="peak_reference_center" type="number" step="any" placeholder="—"></label><label class="field">Reference d-spacing (Å)<input id="peak_reference_d" type="number" step="any" min="0" placeholder="—"></label></div><p class="small-note">Enter a verified reference peak and its d-spacing. No material or reflection is assumed automatically. This Bragg-ratio conversion assumes a shared zero offset and is shown separately from values based on the entered wavelength.</p></details>
+        <button class="button outline" id="fitPeaks" type="button">Analyze peak shape</button>
+        <p class="fringe-status" id="peakStatus" role="status" aria-live="polite">Not analyzed. Select a measured range containing the peaks.</p>
+        <div id="peakResult" hidden>
+          <p class="residual-note">Gray: measured · blue: soft-log analysis · orange: linear-loss analysis · log relative intensity (maximum 1)</p>
+          <svg id="peakPlot" role="img" aria-label="Measured intensity and peak-shape decomposition"></svg>
+          <p class="residual-note">The same range and profiles are fitted with soft-log and linear losses. Center differences describe variation between methods, not a statistical confidence interval. Components are paired in order of increasing center angle. A full-profile area fraction below 15% in either method is labeled weakly determined. A small component may overlap fringes; its phase is unknown. A nonzero area alone does not establish a detected separate peak. Even an observed weak feature needs separate evidence to identify an independent Bragg component.</p>
+          <div class="peak-table-wrap"><table class="peak-table"><thead><tr><th>Component</th><th>soft-log center (°)</th><th>Linear center (°)</th><th>|Center difference| (°)</th><th>soft-log c (Å)</th><th>Linear c (Å)</th><th>soft-log area fraction</th><th>Linear area fraction</th><th>Component interpretation</th></tr></thead><tbody id="peakComparison"></tbody></table></div>
+          <details><summary>Widths, areas and conversions for each method</summary><div class="peak-table-wrap"><table class="peak-table"><thead><tr><th>Method</th><th>Component</th><th>Center 2θ (°)</th><th>λ-based d (Å)</th><th>λ-based 00l c (Å)</th><th>FWHM (°)</th><th>Integrated area (intensity·°)</th><th>Full area fraction</th><th>ROI area fraction</th><th>Lorentz fraction η</th><th id="peakReferenceDHeader" hidden>Reference-corrected d (Å)</th><th id="peakReferenceCHeader" hidden>Reference-corrected 00l c (Å)</th></tr></thead><tbody id="peakComponents"></tbody></table></div></details>
+          <p class="residual-note" id="peakMetrics"></p><p class="fringe-warning" id="peakWarnings" hidden></p>
+          <p class="residual-note">d is converted from the entered wavelength, zero offset and peak center. For a 00l reflection, c = |l|d is a conversion, not evidence of a phase or structure. Area fractions are ratios of integrated component intensities. Full areas include tails outside the range; ROI areas integrate only within the selected range. They are not volume, phase or depth fractions. The unresolved spatial arrangement does not identify a uniform film, two layers or lateral domains.</p>
+        </div>
+      </section>
+
       <div class="info-grid">
         <section class="info-card" aria-labelledby="assumptions-title">
           <div class="info-icon" aria-hidden="true">i</div>
@@ -290,7 +351,7 @@
         </section>
         <section class="info-card" aria-labelledby="model-title">
           <div class="info-icon" aria-hidden="true">∑</div>
-          <div><h3 id="model-title">Model scope</h3><p>A one-dimensional kinematic interference model of a single ABO₃ film on a substrate. Pick the substrate from the list or type its lattice constant in. It is for following trends in repeat counts and lattice constants; dynamical diffraction, the Cu Kα doublet and absolute intensity scaling are not included.</p></div>
+          <div><h3 id="model-title">Model scope</h3><p>A one-dimensional kinematic interference model of one film and one substrate. Choose an ABO₃ or rutile atomic basis, or an effective lattice. Select a substrate or enter its lattice. Explore repeat-count and lattice trends; dynamical diffraction, the Cu Kα doublet and absolute intensity calibration are not included.</p></div>
         </section>
       </div>
       <div class="status" id="status" role="status" aria-live="polite">Loading the example data.</div>

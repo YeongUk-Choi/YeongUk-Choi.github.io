@@ -14,17 +14,17 @@
 "use strict";
 
 const XRDFit = (() => {
-  const FITTABLE = new Set(["film_lattice_a", "film_planes", "angle_offset_deg",
+  const FITTABLE = new Set(["film_lattice_a", "film_lattice_c", "film_planes", "angle_offset_deg",
                             "fwhm_deg", "substrate_planes", "background",
                             "film_lattice_gradient_a", "film_interface_width", "film_thickness_sigma", "background_slope",
-                            "resolution_halo_fraction", "resolution_halo_width"]);
+                            "resolution_halo_fraction", "resolution_halo_width", "film_intensity_scale"]);
   const INTEGER = new Set(["film_planes", "substrate_planes"]);
   const MAX_FIT_POINTS = 1400;
   const MAX_REFERENCE_POINTS = 3001;
-  const ORDER = ["film_lattice_a", "film_planes", "film_lattice_gradient_a",
+  const ORDER = ["film_lattice_a", "film_lattice_c", "film_planes", "film_lattice_gradient_a",
                  "angle_offset_deg", "fwhm_deg", "substrate_planes", "background",
                  "film_interface_width", "film_thickness_sigma", "background_slope",
-                 "resolution_halo_fraction", "resolution_halo_width"];
+                 "resolution_halo_fraction", "resolution_halo_width", "film_intensity_scale"];
 
   let Core = null;
   function useCore(core) { Core = core; }
@@ -190,7 +190,7 @@ const XRDFit = (() => {
     for (const [name, pair] of Object.entries(raw)) {
       if (!FITTABLE.has(name)) throw new Error(`Parameter cannot be fitted: ${name}`);
       if (!Array.isArray(pair) || pair.length !== 2) throw new Error(`${name} bounds must have lower and upper values`);
-      if (name.startsWith("resolution_halo_") && pair.some(value => !["number", "string"].includes(typeof value)
+      if ((name.startsWith("resolution_halo_") || ["film_intensity_scale", "film_lattice_c"].includes(name)) && pair.some(value => !["number", "string"].includes(typeof value)
           || typeof value === "string" && !value.trim())) throw new Error(`${name} bounds must be finite`);
       let [low, high] = pair.map(Number);
       if (!Number.isFinite(low) || !Number.isFinite(high)) throw new Error(`${name} bounds must be finite`);
@@ -200,8 +200,10 @@ const XRDFit = (() => {
           throw new Error(`${name} bounds must contain an integer from 0 to 1,000,000`);
         }
         low = Math.ceil(low); high = Math.floor(high);
-      } else if (name === "film_lattice_a" && low <= 0) {
-        throw new Error("film_lattice_a bounds must be positive");
+      } else if (["film_lattice_a", "film_lattice_c"].includes(name) && low <= 0) {
+        throw new Error(`${name} bounds must be positive`);
+      } else if (name === "film_intensity_scale" && (low < 0 || high > 100)) {
+        throw new Error("film_intensity_scale bounds must lie in [0, 100]");
       } else if (name === "fwhm_deg" && low < 0) {
         throw new Error("fwhm_deg bounds must be nonnegative");
       } else if (name === "resolution_halo_fraction" && (low < 0 || high > 0.2)) {
@@ -226,7 +228,40 @@ const XRDFit = (() => {
   }
 
   const thicknessNm = (params) =>
-    (params.film_planes * Core.projectedRepeat(params.film_lattice_a, Core.parseHkl(params.hkl))) / 10;
+    (params.film_planes * Core.filmProjectedRepeat(params)) / 10;
+
+  function substrateBraggAngle(params) {
+    const [a, c, system] = Core.substrateLattice(params);
+    return Core.braggAngle(a, params.hkl, params.wavelength, c, system);
+  }
+
+  function repeatInterval(params, limits) {
+    const a = limits.film_lattice_a || [params.film_lattice_a, params.film_lattice_a];
+    const c = limits.film_lattice_c || [params.film_lattice_c, params.film_lattice_c];
+    return [0, 1].map(i => Core.filmProjectedRepeat({...params, film_lattice_a:a[i], film_lattice_c:c[i]}));
+  }
+
+  function constrainTetragonalLattice(params, limits, names, thickness) {
+    if (!params.film_planes) throw new Error("Fixed film parameters do not satisfy thickness bounds");
+    const preferred = Core.filmActiveLatticeKey(params);
+    const keys = [preferred, ...["film_lattice_a", "film_lattice_c"].filter(key => key !== preferred)]
+      .filter(key => names.includes(key));
+    const target = Math.min(thickness[1], Math.max(thickness[0], thicknessNm(params)));
+    const groups = keys.map(key => [key]);
+    if (keys.length > 1) groups.push(keys);
+    for (const group of groups) {
+      const at = (t) => Object.fromEntries(group.map(key => [key, limits[key][0] + t * (limits[key][1] - limits[key][0])]));
+      const lowT = thicknessNm({...params, ...at(0)}), highT = thicknessNm({...params, ...at(1)});
+      if (!(lowT <= target && target <= highT) || highT === lowT) continue;
+      let lo = 0, hi = 1;
+      for (let i = 0; i < 52; i++) {
+        const middle = (lo + hi) / 2;
+        if (thicknessNm({...params, ...at(middle)}) < target) lo = middle; else hi = middle;
+      }
+      return {...params, ...at((lo + hi) / 2)};
+    }
+    throw new Error("Lattice bounds cannot satisfy thickness bounds");
+  }
 
   function peakFwhm(angles, intensities) {
     if (angles.length < 3 || angles.length !== intensities.length) return null;
@@ -254,7 +289,12 @@ const XRDFit = (() => {
     if (!Number.isInteger(maxEvaluations) || maxEvaluations < 1 || maxEvaluations > 20000) {
       throw new Error("max_evaluations must be an integer from 1 to 20,000");
     }
+    initial = Core.normalizeParams(initial);
     const limits = normaliseBounds(rawBounds);
+    if (limits.film_lattice_c) {
+      if (initial.film_system !== "tetragonal") throw new Error("film_lattice_c can only be fitted for tetragonal films");
+      if (initial.film_lattice_c === 0) initial = {...initial, film_lattice_c:Core.filmLattice(initial)[1]};
+    }
     let thicknessLimits = null;
     if (thicknessBoundsNm) {
       const [tLow, tHigh] = thicknessBoundsNm.map(Number);
@@ -263,8 +303,11 @@ const XRDFit = (() => {
       const [latticeLow, latticeHigh] = limits.film_lattice_a || [initial.film_lattice_a, initial.film_lattice_a];
       const [planesLow, planesHigh] = limits.film_planes || [initial.film_planes, initial.film_planes];
       const repeatPerAngstromNm = Core.projectedRepeat(1, Core.parseHkl(initial.hkl)) / 10;
-      const feasibleLow = Math.max(planesLow, Math.ceil(tLow / (latticeHigh * repeatPerAngstromNm) - 1e-10));
-      const feasibleHigh = Math.min(planesHigh, Math.floor(tHigh / (latticeLow * repeatPerAngstromNm) + 1e-10));
+      const [repeatLow, repeatHigh] = initial.film_system === "tetragonal"
+        ? repeatInterval(initial, limits).map(value => value / 10)
+        : [latticeLow * repeatPerAngstromNm, latticeHigh * repeatPerAngstromNm];
+      const feasibleLow = Math.max(planesLow, Math.ceil(tLow / repeatHigh - 1e-10));
+      const feasibleHigh = Math.min(planesHigh, Math.floor(tHigh / repeatLow + 1e-10));
       if (feasibleLow > feasibleHigh) {
         throw new Error("Thickness bounds cannot be reached within the lattice and repeat-count bounds");
       }
@@ -295,11 +338,11 @@ const XRDFit = (() => {
     const runningBest = {score: Infinity};
     const cache = new Map();
     const keyOf = (params) => ORDER.concat(["hkl", "film_material", "substrate_material",
-      "wavelength", "substrate_lattice_a", "substrate_lattice_c", "lp_mode"])
+      "wavelength", "substrate_lattice_a", "substrate_lattice_c", "film_system", "film_basis", "lp_mode"])
       .map((field) => params[field]).join("|");
 
     function candidate(values) {
-      const changes = Object.assign({}, initial);
+      let changes = Object.assign({}, initial);
       names.forEach((name, coord) => {
         const [lo, hi] = limits[name];
         const adjusted = Math.min(hi, Math.max(lo, values[coord]));
@@ -309,10 +352,23 @@ const XRDFit = (() => {
         if (lo === hi) changes[name] = INTEGER.has(name) ? Math.round(lo) : lo;
       }
       if (thicknessLimits) {
-        const repeat = Core.projectedRepeat(changes.film_lattice_a, Core.parseHkl(changes.hkl)) / 10;
+        const repeat = Core.filmProjectedRepeat(changes) / 10;
         const planes = changes.film_planes;
         const thickness = planes * repeat;
-        if (thickness < thicknessLimits[0] || thickness > thicknessLimits[1]) {
+        if (changes.film_system === "tetragonal") {
+          if (names.includes("film_planes")) {
+            const minimum = Math.max(limits.film_planes[0], Math.ceil(thicknessLimits[0] / repeat - 1e-10));
+            const maximum = Math.min(limits.film_planes[1], Math.floor(thicknessLimits[1] / repeat + 1e-10));
+            if (minimum > maximum) throw new Error("No integer film repeat count satisfies the thickness bounds");
+            changes.film_planes = Math.min(maximum, Math.max(minimum, planes));
+          } else if (thickness < thicknessLimits[0] || thickness > thicknessLimits[1]) {
+            changes = constrainTetragonalLattice(changes, limits, names, thicknessLimits);
+          }
+          const actual = thicknessNm(changes);
+          if (!(thicknessLimits[0] - 1e-10 <= actual && actual <= thicknessLimits[1] + 1e-10)) {
+            throw new Error("Trial thickness is outside the requested bounds");
+          }
+        } else if (thickness < thicknessLimits[0] || thickness > thicknessLimits[1]) {
           const clamped = Math.min(thicknessLimits[1], Math.max(thicknessLimits[0], thickness));
           let target = Math.round(clamped / repeat);
           const [pLo, pHi] = limits.film_planes || [planes, planes];
@@ -339,9 +395,9 @@ const XRDFit = (() => {
         let trialReference = reference, trialPositions = positions;
         if (referenceDecimated) {
           const added = new Set();
-          for (const latticeA of [params.film_lattice_a, params.substrate_lattice_a]) {
+          for (const peakFunction of [Core.filmBraggAngle, substrateBraggAngle]) {
             let peakAngle;
-            try { peakAngle = Core.braggAngle(latticeA, params.hkl, params.wavelength) + params.angle_offset_deg; }
+            try { peakAngle = peakFunction(params) + params.angle_offset_deg; }
             catch (error) { continue; }
             const index = bisectLeft(sourceReference, peakAngle);
             for (const neighbour of [index - 1, index, index + 1]) {
@@ -406,9 +462,9 @@ const XRDFit = (() => {
     if (names.length) {
       const seeds = [clipped(vector(initial))];
       if (names.includes("angle_offset_deg")) {
-        for (const latticeA of [initial.substrate_lattice_a, initial.film_lattice_a]) {
+        for (const peakFunction of [substrateBraggAngle, Core.filmBraggAngle]) {
           let offset;
-          try { offset = measuredPeakAngle - Core.braggAngle(latticeA, initial.hkl, initial.wavelength); }
+          try { offset = measuredPeakAngle - peakFunction(initial); }
           catch (error) { continue; }
           const aligned = vector(initial);
           aligned[names.indexOf("angle_offset_deg")] = offset;
