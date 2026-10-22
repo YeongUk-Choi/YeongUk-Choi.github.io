@@ -185,8 +185,8 @@ window.XRDLocal = (() => {
       if (!Number.isFinite(angle) || angle <= 0 || angle >= 180) {
         throw new Error(`Line ${index + 1}: 2-theta must be finite and between 0 and 180`);
       }
-      if (!Number.isFinite(intensity) || intensity < 0) {
-        throw new Error(`Line ${index + 1}: intensity must be finite and nonnegative`);
+      if (!Number.isFinite(intensity)) {
+        throw new Error(`Line ${index + 1}: intensity must be finite`);
       }
       if (angles.length && angle <= angles.at(-1)) {
         throw new Error(`Line ${index + 1}: 2-theta values must increase strictly`);
@@ -195,9 +195,6 @@ window.XRDLocal = (() => {
       intensities.push(intensity);
     });
     if (angles.length < 2) throw new Error("At least two two-column numeric XRD points are required");
-    if (!intensities.some((intensity) => intensity > 0)) {
-      throw new Error("Measurement has no positive intensity values");
-    }
     return {angles, intensities, filename};
   }
 
@@ -381,6 +378,10 @@ window.XRDLocal = (() => {
     let request;
     try { request = JSON.parse(options.body); }
     catch (error) { throw new Error("Invalid JSON request"); }
+    if (route.pathname === "/api/intensity") {
+      if (!request || typeof request !== "object" || Array.isArray(request)) throw new Error("Intensity request must be an object");
+      return XRDIntensity.convert(request.measurement, request.settings === undefined ? {} : request.settings);
+    }
     if (route.pathname === "/api/fringes") return XRDFringes.estimate(request);
     if (route.pathname === "/api/peaks") return XRDPeaks.analyzePeaks(request);
     if (route.pathname === "/api/simulate") return simulate(request, catalogue);

@@ -21,11 +21,12 @@ function option(name, fallback) {
   return options[i + 1];
 }
 for (let i = 0; i < options.length; i += 2) {
-  assert(["--xrd-root", "--chrome", "--output", "--analysis-fixtures"].includes(options[i]), `Unknown argument ${options[i]}`);
+  assert(["--xrd-root", "--chrome", "--output", "--analysis-fixtures", "--intensity-fixture"].includes(options[i]), `Unknown argument ${options[i]}`);
   assert(options[i + 1], `Missing value for ${options[i]}`);
 }
 const xrdRoot = path.resolve(option("--xrd-root", path.join(siteRoot, "../xrd-studio-gpt")));
 const analysisFixtures = option("--analysis-fixtures", null);
+const intensityFixture = option("--intensity-fixture", null);
 const chromePath = option("--chrome", process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
 const temp = await mkdtemp("/private/tmp/xrd-gate-test-");
 const evidence = path.resolve(option("--output", path.join(temp, "evidence")));
@@ -78,7 +79,7 @@ async function connect(url) {
 try {
   execFileSync("python3", [path.join(xrdRoot, "scripts/build_web.py"), "--output", path.join(temp, "plain")]);
   const filenames = ["index.html", "en/index.html", "app.js", "en/app.js", "styles.css",
-    "xrd_core.js", "xrd_fit.js", "xrd_fringes.js", "xrd_peaks.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
+    "xrd_core.js", "xrd_fit.js", "xrd_fringes.js", "xrd_peaks.js", "xrd_intensity.js", "xrd_local.js", "xrd_worker.js", "xrd_data.json", "sample_data.dat", "favicon.svg"];
   const files = Object.fromEntries(await Promise.all(filenames.map(async (name) =>
     [name, await readFile(path.join(temp, "plain", name), "utf8")])));
   for (const filename of filenames) {
@@ -90,7 +91,7 @@ try {
     sourceHead:execFileSync("git",["rev-parse","HEAD"],{cwd:xrdRoot,encoding:"utf8"}).trim(),
     assets:Object.fromEntries(Object.entries(files).map(([name,content])=>[name,{freshBuildSha256:hash(content),shippedSha256:hash(content)}]))
   },null,2));
-  record("All fourteen shipped static app files match a fresh source build");
+  record("All fifteen shipped static app files match a fresh source build");
   const wrongCode = "intentionally-wrong-test-code";
   const correctCode = "local-fixture-code-1234";
   const fixture = {enabled: true};
@@ -393,12 +394,18 @@ try {
     await writeFile(path.join(evidence, `${name}.json`), download.text);
     return value;
   }
-  async function loadProjectFixture(value, name) {
+  async function loadProjectFixture(value, name, {pending=false}={}) {
     const target = path.join(evidence, `${name}.json`);
     await writeFile(target, JSON.stringify(value, null, 2));
     const input = await cdp.send("Runtime.evaluate", {expression:
       `document.getElementById("studio-frame").contentDocument.getElementById("projectFile")`});
     await cdp.send("DOM.setFileInputFiles", {objectId: input.result.objectId, files: [target]});
+    if (pending) {
+      await waitFor(app(`f.contentWindow.eval("state.measurementSource?.filename") === ${JSON.stringify(value.measurement_name)} &&
+        f.contentWindow.eval("state.intensityPending") && !d.getElementById("runSimulation").disabled &&
+        d.getElementById("intensityStatus").classList.contains("error")`), `load pending ${name}`, 30000);
+      return;
+    }
     await waitFor(app(`d.getElementById("status").textContent.includes(${JSON.stringify(`${name}.json`)}) &&
       !d.getElementById("runSimulation").disabled`), `load ${name}`, 30000);
     assert(!await evaluate(app(`d.getElementById("status").classList.contains("error")`)), `Could not load ${name}`);
@@ -567,6 +574,10 @@ try {
     assert(auto.peak_angles.length>=4);assert(auto.relative_scatter<0.12);
     assert.equal(await evaluate(app(`d.getElementById("fringeWarning").hidden`)),true);
     record(`${language}: fringes start unestimated; explicit ROI action estimates synthetic consecutive fringes`,{thickness:auto.thickness_nm,peaks:auto.peak_angles.length,scatter:auto.relative_scatter});
+    await setIntensityControls({intensity_decades:9});
+    assert.equal(await evaluate(app(`d.getElementById("fringeResult").hidden && !f.contentWindow.eval("state.fringe")`)),true);
+    await setIntensityControls({intensity_decades:8});await applyIntensityControls();
+    record(`${language}: editing input intensity settings invalidates an existing measured-fringe result until explicit reapplication`);
 
     const setManual=async peaks=>evaluate(app(`(() => {const input=d.getElementById("fringe_manual_peaks");input.value=${JSON.stringify(peaks.map(v=>v.toFixed(10)).join(", "))};input.dispatchEvent(new Event("input",{bubbles:true}));return true;})()`));
     const estimate=async()=>{await appClick("estimateFringes");await waitFor(app(`!d.getElementById("estimateFringes").disabled`),`${language} manual fringe estimate`);};
@@ -676,6 +687,10 @@ try {
     await cardScreenshot("peakCard",`peak-decomposition-${language}`);
     await cardScreenshot("peakCard",`peak-decomposition-${language}-mobile`,true);
     record(`${language}: explicit two-profile ROI fits both losses, compares centers/areas, previews both curves and leaves physical simulation unchanged`,{soft:result.soft_log.components,linear:result.linear.components});
+    await setIntensityControls({negative_policy:"clip"});
+    assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden && !f.contentWindow.eval("state.peakAnalysis")`)),true);
+    await setIntensityControls({negative_policy:"reject"});await applyIntensityControls();
+    record(`${language}: editing input intensity settings invalidates existing descriptive peak fits until explicit reapplication`);
 
     await evaluate(app(`(() => {for(const [id,value] of [["peak_reference_center","44"],["peak_reference_d","1.48"]]){const n=d.getElementById(id);n.value=value;n.dispatchEvent(new Event("input",{bubbles:true}));}return true;})()`));
     assert.equal(await evaluate(app(`d.getElementById("peakResult").hidden`)),true);await fit();
@@ -707,7 +722,162 @@ try {
     await loadProjectFixture(baseline,`peaks-${language}-baseline-restore`);
   }
 
+  async function setIntensityControls(settings) {
+    await evaluate(app(`(() => {for(const [id,value] of Object.entries(${JSON.stringify(settings)})) {
+      const node=d.getElementById(id);node.value=String(value);node.dispatchEvent(new Event("input",{bubbles:true}));
+    }return true;})()`));
+  }
+  async function applyIntensityControls({valid=true}={}) {
+    await appClick("applyIntensity");
+    await waitFor(app(valid ? `!!f.contentWindow.eval("state.measurement") && !d.getElementById("runSimulation").disabled` :
+      `!f.contentWindow.eval("state.measurement") && d.getElementById("intensityStatus").classList.contains("error")`),
+      `intensity conversion ${valid ? "accepted" : "rejected"}`,30000);
+  }
+  async function uploadIntensityFile(text,name,{valid=true}={}) {
+    const target=path.join(evidence,name);await writeFile(target,text);
+    const input=await cdp.send("Runtime.evaluate",{expression:`document.getElementById("studio-frame").contentDocument.getElementById("dataFile")`});
+    await cdp.send("DOM.setFileInputFiles",{objectId:input.result.objectId,files:[target]});
+    await waitFor(app(`f.contentWindow.eval("state.measurementSource?.filename")===${JSON.stringify(name)} &&
+      ${valid ? `!!f.contentWindow.eval("state.measurement") && !d.getElementById("runSimulation").disabled` :
+      `!f.contentWindow.eval("state.measurement") && d.getElementById("intensityStatus").classList.contains("error")`}`),`upload ${name}`,30000);
+  }
+  async function intensitySnapshot() {
+    return evaluate(app(`({source:f.contentWindow.eval("state.measurementSource"),measurement:f.contentWindow.eval("state.measurement"),
+      pending:f.contentWindow.eval("state.intensityPending"),settings:f.contentWindow.eval("readIntensitySettings")(),
+      summary:d.getElementById("intensitySummary").textContent,hint:!d.getElementById("intensityHint").hidden,
+      disabled:["runFit","estimateFringes","fitPeaks"].map(id=>d.getElementById(id).disabled),
+      resultHidden:["fitResult","fringeResult","peakResult"].map(id=>d.getElementById(id).hidden)})`));
+  }
+  function assertArrayClose(actual,expected,label) {
+    assert.equal(actual.length,expected.length,label);
+    actual.forEach((value,i)=>assert(Number.isFinite(value)&&Math.abs(value-expected[i])<=1e-12*Math.max(1,Math.abs(expected[i])),`${label} at ${i}: ${value} vs ${expected[i]}`));
+  }
+  async function intensityFlow(language,baseline) {
+    const defaults={intensity_scale:"linear",intensity_decades:8,negative_policy:"reject"};
+    assert.deepEqual((await intensitySnapshot()).settings,defaults);
+    const labels=await evaluate(app(`d.getElementById("intensity_scale").closest("section").textContent`));
+    assert.match(labels,language==="ko"?/원본/:/original|raw/i);
+    if(language==="en")assert(!/[가-힣]/.test(labels),"English intensity controls must be translated");
+    const angles=Array.from({length:41},(_,i)=>28+i*.05),raw=angles.map((_,i)=>(i-20)/20);
+    const text=raw.map((y,i)=>`${angles[i]} ${y}`).join("\n");
+    await uploadIntensityFile(text,`intensity-${language}-signed.dat`,{valid:false});
+    let state=await intensitySnapshot();
+    assert.deepEqual(state.source.intensities,raw);assert.equal(state.measurement,null);assert(state.pending);
+    assert.deepEqual(state.disabled,[true,true,true]);assert.deepEqual(state.resultHidden,[true,true,true]);
+    assert.equal(state.settings.intensity_scale,"linear");assert.equal(state.hint,true,"Exact max=1 signed fixture should suggest checking log encoding");
+    assert.match(state.summary,language==="ko"?/대기/:/pending/i);
+    record(`${language}: signed raw upload remains pending, blocks all analyses and suggests checking log encoding without selecting it`);
+    const pending=await saveCurrentProject(`intensity-${language}-pending-saved`);
+    assert.equal(pending.measurement,undefined);assert.deepEqual(pending.measurement_source.intensity_raw,raw);
+    assert.deepEqual(pending.intensity_settings,defaults);assert.equal(pending.fit_result,undefined);
+    await setIntensityControls({negative_policy:"clip"});await applyIntensityControls();
+    await loadProjectFixture(pending,`intensity-${language}-pending-roundtrip`,{pending:true});
+    assert.deepEqual((await intensitySnapshot()).source.intensities,raw);
+    for(const policy of ["clip","shift"]) {
+      await setIntensityControls({negative_policy:policy});await applyIntensityControls();state=await intensitySnapshot();
+      assertArrayClose(state.measurement.intensities,raw.map(y=>policy==="clip"?Math.max(0,y):y+1),policy);
+      assert.deepEqual(state.source.intensities,raw);assert.equal(state.measurement.intensity_transform.shift,policy==="clip"?0:1);
+      assert.equal(state.measurement.intensity_transform.negative_count,20);assert(!state.pending);
+      assert.match(state.summary,new RegExp(policy));
+    }
+    record(`${language}: pending project preserves signed raw values; explicit clip and shift use the original source and record their provenance`);
+    for(const mode of ["log10","log10_normalized"]) {
+      await setIntensityControls({intensity_scale:mode,intensity_decades:8,negative_policy:"clip"});
+      assert.equal((await intensitySnapshot()).measurement,null,"Editing conversion settings must invalidate prior linear data");
+      await applyIntensityControls();state=await intensitySnapshot();
+      const expected=raw.map(y=>10**(y*(mode==="log10"?1:8)));
+      assertArrayClose(state.measurement.intensities,expected,mode);assert.deepEqual(state.source.intensities,raw);
+      assert.equal(state.measurement.intensity_transform.shift,0,"Log modes must not clip signed exponents");
+      const saved=await saveCurrentProject(`intensity-${language}-${mode}-saved`);
+      assert.deepEqual(saved.measurement_source.intensity_raw,raw);assertArrayClose(saved.measurement.intensity_raw,expected,"saved linear");
+      assert.equal(saved.intensity_settings.intensity_scale,mode);
+      await loadProjectFixture(saved,`intensity-${language}-${mode}-roundtrip`);
+      assertArrayClose((await intensitySnapshot()).measurement.intensities,expected,"single conversion on reopen");
+      const resaved=await saveCurrentProject(`intensity-${language}-${mode}-resaved`);
+      assert.deepEqual(resaved.measurement,saved.measurement);assert.deepEqual(resaved.measurement_source,saved.measurement_source);
+    }
+    assert.equal(await evaluate(app(`d.getElementById("intensityDecadesField").hidden`)),false);
+    const modeBefore=(await intensitySnapshot()).settings;
+    for(const id of ["linearScale","logScale"]) {await appClick(id);assert.equal(await evaluate(app(`d.getElementById(${JSON.stringify(id)}).getAttribute("aria-pressed")`)),"true");}
+    assert.deepEqual((await intensitySnapshot()).settings,modeBefore,"Display scale must not change input conversion");
+    await cardScreenshot("data-title",`intensity-${language}-normalized`);
+    await cardScreenshot("data-title",`intensity-${language}-normalized-mobile`,true);
+    record(`${language}: log10 and normalized log invert exactly once, saved raw/settings round-trip, and display log/linear controls remain independent`);
+    for(const decades of ["",0,21]) {
+      await setIntensityControls({intensity_decades:decades});await applyIntensityControls({valid:false});
+      const rejected=await evaluate(app(`({measurement:f.contentWindow.eval("state.measurement"),disabled:d.getElementById("runFit").disabled,text:d.getElementById("intensityStatus").textContent})`));
+      assert.equal(rejected.measurement,null);assert(rejected.disabled);if(language==="en")assert(!/[가-힣]/.test(rejected.text));
+    }
+    await setIntensityControls({intensity_scale:"log10",intensity_decades:8});
+    for(const exponent of [400,-400]) {
+      await uploadIntensityFile(angles.map((x,i)=>`${x} ${exponent+i/100}`).join("\n"),`intensity-${language}-${exponent}.dat`,{valid:false});
+      assert.deepEqual((await intensitySnapshot()).disabled,[true,true,true]);
+    }
+    record(`${language}: missing/out-of-range decades and exponential overflow/underflow retain raw data but reject analysis`);
+    const legacy=structuredClone(baseline);delete legacy.measurement_source;delete legacy.intensity_settings;delete legacy.intensity_transform;
+    await loadProjectFixture(legacy,`intensity-${language}-legacy`);state=await intensitySnapshot();
+    assert.deepEqual(state.settings,defaults);assert.deepEqual(state.measurement.intensities,baseline.measurement.intensity_raw);
+    assert.deepEqual(state.source.intensities,baseline.measurement.intensity_raw);
+    assert.equal(await evaluate(app(`d.getElementById("fitResult").hidden`)),false,"Legacy linear fit remains valid");
+    await setIntensityControls({negative_policy:"clip"});
+    assert.equal(await evaluate(app(`d.getElementById("fitResult").hidden && !f.contentWindow.eval("state.fitResult")`)),true);
+    await loadProjectFixture(legacy,`intensity-${language}-legacy-restored`);
+    record(`${language}: legacy projects without intensity metadata load unchanged as linear and retain matching fit scores`);
+    // Delay one conversion to reproduce an older project import completing
+    // after a newer upload. The production File reader and import path run;
+    // only the conversion response timing is controlled by this local test.
+    const delayed=structuredClone(baseline);
+    delayed.measurement_name=`stale-${language}.dat`;
+    delayed.fringe_settings={roi:["28","29"],manual_peaks:"28.1,28.2,28.3,28.4",manual_orders:"0,1,2,3"};
+    delayed.peak_settings={roi:["28","29"],peak_count:1,reference_center:"28.5",reference_d:"2"};
+    await evaluate(app(`(() => {
+      f.contentWindow.__raceOriginal=f.contentWindow.eval("getJson");f.contentWindow.__raceCaptured=false;
+      f.contentWindow.eval('getJson=async function(url,options){if(url==="/api/intensity"&&!window.__raceCaptured){window.__raceCaptured=true;await new Promise(resolve=>window.__raceRelease=resolve);}return window.__raceOriginal(url,options);}');
+      const file=new f.contentWindow.File([${JSON.stringify(JSON.stringify(delayed))}],"delayed-project.json",{type:"application/json"});
+      f.contentWindow.__raceLoad=f.contentWindow.eval("loadProject")(file);
+      return true;
+    })()`));
+    await waitFor(app(`typeof f.contentWindow.__raceRelease==="function"`),`${language} delayed intensity conversion`);
+    const replacement=raw.map(y=>y+2);
+    await uploadIntensityFile(replacement.map((y,i)=>`${angles[i]} ${y}`).join("\n"),`intensity-${language}-newer.dat`);
+    await evaluate(app(`(async()=>{f.contentWindow.__raceRelease();await f.contentWindow.__raceLoad;
+      f.contentWindow.eval("getJson=window.__raceOriginal");delete f.contentWindow.__raceOriginal;delete f.contentWindow.__raceRelease;delete f.contentWindow.__raceLoad;return true;})()`));
+    state=await intensitySnapshot();assert.deepEqual(state.measurement.intensities,replacement);
+    assert.equal(state.source.filename,`intensity-${language}-newer.dat`);assert.deepEqual(state.resultHidden,[true,true,true]);
+    assert.deepEqual(await evaluate(app(`["fringe_min","fringe_max","fringe_manual_peaks","peak_min","peak_max","peak_reference_center"].map(id=>d.getElementById(id).value)`)),["","","","","",""]);
+    record(`${language}: delayed old project conversion cannot replace a newer upload or restore obsolete diagnostic inputs and fit scores`);
+    await loadProjectFixture(legacy,`intensity-${language}-after-race`);
+    const beforeInvalid=await intensitySnapshot();
+    for(const settings of [null,{...defaults,intensity_scale:null},{...defaults,negative_policy:null},
+      {...defaults,intensity_scale:"log10_normalized",intensity_decades:null}]) {
+      const invalid={...baseline,intensity_settings:settings};
+      await evaluate(app(`(async()=>{const file=new f.contentWindow.File([${JSON.stringify(JSON.stringify(invalid))}],"invalid-intensity-settings.json",{type:"application/json"});
+        await f.contentWindow.eval("loadProject")(file);return true;})()`));
+      assert.equal(await evaluate(app(`d.getElementById("status").classList.contains("error")`)),true,"Explicit null intensity settings must be rejected, not defaulted");
+      const unchanged=await intensitySnapshot();assert.deepEqual(unchanged.settings,beforeInvalid.settings);
+      assert.deepEqual(unchanged.measurement,beforeInvalid.measurement);
+      const message=await evaluate(app(`d.getElementById("status").textContent`));
+      if(language==="en")assert(!/[가-힣]/.test(message));
+    }
+    record(`${language}: explicit null project settings, scale, policy and normalized-log decades are rejected without inventing defaults or replacing current data`);
+    if(intensityFixture&&language==="ko") {
+      const fileText=await readFile(path.resolve(intensityFixture),"utf8");
+      await uploadIntensityFile(fileText,"actual-629-signed.txt",{valid:false});state=await intensitySnapshot();
+      const source=state.source.intensities;
+      assert.equal(source.filter(y=>y<0).length,68);assert.equal(state.hint,false,"Actual maximum 1.00003 is outside the hint tolerance");
+      assert.deepEqual(state.disabled,[true,true,true]);assert.equal(state.settings.intensity_scale,"linear");
+      await setIntensityControls({intensity_scale:"log10_normalized",intensity_decades:8});await applyIntensityControls();
+      state=await intensitySnapshot();assertArrayClose(state.measurement.intensities,source.map(y=>10**(8*y)),"conditional actual 629 conversion");
+      assert.deepEqual(state.source.intensities,source);
+      await writeFile(path.join(evidence,"actual-629-intensity-browser.json"),JSON.stringify({assumption:"User-selected normalized log, D=8 is a conditional test, not inferred file metadata",points:source.length,negativeCount:68,rawMaximum:Math.max(...source),transform:state.measurement.intensity_transform,summary:state.summary},null,2));
+      await cardScreenshot("data-title","actual-629-intensity-mobile",true);
+      record("Actual #629: 68 negative raw values remain pending; conditional explicit D8 conversion is finite and leaves source unchanged",{points:source.length,max:Math.max(...source)});
+    }
+    await loadProjectFixture(baseline,`intensity-${language}-baseline-restore`);
+  }
+
   async function refinementFlow(language, baseline) {
+    await intensityFlow(language,baseline);
     await rutileFlow(language, baseline);
     await fringeFlow(language, baseline);
     await peakFlow(language, baseline);
