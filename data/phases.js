@@ -21,6 +21,7 @@ window.SITE.phases = {
   // 연구실 Apps Script 웹앱. data/ppms.js 의 apiUrl 과 같은 주소다(같은 배포본).
   // 코드 확인(gate)과 COD 중계(live)가 둘 다 이 주소를 쓴다.
   relayUrl: "https://script.google.com/macros/s/AKfycby8gAEUJxLM9gJ_1x6U6g_v8N2yCMB9Rvum194fPG1Op7W8CPesnHKLdTpgotJ9FbudOA/exec",
-  live: false,    // COD 즉석 검색. 위 확인(?action=cod 가 ok:true)을 마친 뒤 true.
+  live: true,     // COD 즉석 검색. 2026-10-25 재배포 확인 후 켬 (?action=cod&formula=VO2 → ok:true, 11건;
+                  // sg=14 → 2건; sg=999 → INVALID_SG; action=cif → CIF 원문. 같은 배포본의 헬륨 텔레메트리 수신도 확인).
   gate: true      // 공용 코드 화면. xrdcheck 는 이미 배포돼 있으므로 live 와 무관하게 지금도 동작한다.
 };
