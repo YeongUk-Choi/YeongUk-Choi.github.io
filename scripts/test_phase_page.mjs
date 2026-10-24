@@ -85,6 +85,10 @@ const server = createServer((req, res) => {
          is not, and the cell is there but the number is not. */
       if (relayMode === "no-cell") rows = rows.map(r => ({ ...r, a: null, b: null, c: null }));
       if (relayMode === "no-sg") rows = cache.entries.map(asCodRow).map(r => ({ ...r, sg: "", sgNumber: null }));
+      /* The commoner shape of the same thing: most records carry a number,
+         none of them the one that was asked for, and one is blank. */
+      if (relayMode === "some-sg") rows = cache.entries.filter(e => e.sg_number !== n).map(asCodRow)
+        .map((r, i) => (i === 0 ? { ...r, sg: "", sgNumber: null } : r));
       const reply = () => send(200, "application/json", JSON.stringify({
         ok: true, status: rows.length ? "ok" : "empty", formula: url.searchParams.get("formula"),
         sg_number: n, query_mode: n ? "exact_formula+space_group_number" : "exact_formula",
@@ -265,8 +269,18 @@ try {
   relayMode = "no-sg";
   await search("TiO2", "14");
   line = await waitStatus(/14번/);
-  ok("records with no space group number are counted out loud, not silently",
-    /등록된 COD 레코드가 없습니다/.test(line) && /공간군 번호가 비어 있어 확인하지 못한 레코드가 11건 있습니다/.test(line), line);
+  ok("nothing judged means nothing claimed, not an absence",
+    /COD 레코드 11건은 모두 공간군 번호가 비어 있어, 14번인지 판정하지 못했습니다/.test(line)
+    && !/없습니다/.test(line), line);
+
+  /* The mixed case: some records were judged and none of them matched, so an
+     absence may be stated - but only over the ones that were judged. */
+  relayMode = "some-sg";
+  await search("TiO2", "14");
+  line = await waitStatus(/14번/);
+  ok("an absence is scoped to the records that could be judged",
+    /공간군 14번으로 확인된 레코드가 없습니다/.test(line)
+    && /판정하지 못한 레코드가 1건/.test(line), line);
 
   console.log("two searches in flight at once");
   /* The reader types a second search before the first answers, and the
@@ -314,6 +328,29 @@ try {
     await text("#pv-status"));
   ok("the new search keeps its own line", /공간군 14번 2건/.test(await text("#pv-status")), await text("#pv-status"));
   cifDelay = 0;
+
+  /* The same race in the other order, which the sequence number alone cannot
+     tell apart: the second search is already in flight when the row of the
+     first list is ticked, so the tick carries the new search's number and
+     passes the check when its CIF lands on the new list. */
+  relayMode = "filter";
+  await search("TiO2", "136");
+  await waitStatus(/공간군 136번/);
+  const oldRow = await text("#pv-list");
+  cifDelay = 1500;
+  relayMode = "slow-14";
+  await search("TiO2", "14");              /* 900 ms away; list A is still up */
+  await sleep(150);
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  await sleep(2200);                       /* the new list at ~900, the CIF at ~1650 */
+  ok("a CIF for a row of the replaced list does not tick the new one",
+    (await run(`document.querySelectorAll("#pv-list input:checked").length`)) === 0
+    && (await run(`document.querySelectorAll("#pv-figure svg").length`)) === 0,
+    await text("#pv-status"));
+  ok("the search that was in flight keeps its own line",
+    /공간군 14번 COD 레코드/.test(await text("#pv-status")), await text("#pv-status"));
+  ok("and its own candidate list", (await text("#pv-list")) !== oldRow);
+  cifDelay = 0; relayMode = "filter";
 
   console.log("ending and resuming a session");
   await run(`document.querySelector("#pv-lock").click()`);

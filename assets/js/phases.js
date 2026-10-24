@@ -213,14 +213,27 @@
        missing cell or a missing number is reported as such instead. */
     if (sg != null && !recs.length) {
       const seen = Array.from(new Set(found.filter(sgKnown).map(e => e.sg_number))).sort((x, y) => x - y);
+      /* An absence may only be claimed over the records that could actually
+         be judged. A record whose number is blank may well carry the number
+         that was asked for, so it cannot be counted towards "COD does not
+         have it" - and when every returned record is blank, nothing about
+         the number was established at all. Saying it afterwards does not
+         undo an assertion made first: the leading sentence has to be the
+         true one. */
+      const allUnknown = unknown > 0 && unknown === found.length;
       const head = matched.length
         ? `‘${name}’에 공간군 ${sg}번 COD 레코드 ${matched.length}건이 있지만, 격자값이 없어 그릴 수 없습니다`
+          + (unknown ? `. 공간군 번호가 비어 있어 판정하지 못한 레코드도 ${unknown}건 있습니다` : "")
+        : allUnknown
+          ? `‘${name}’으로 돌아온 COD 레코드 ${found.length}건은 모두 공간군 번호가 비어 있어, ${sg}번인지 판정하지 못했습니다`
+        : unknown
+          ? `‘${name}’에서 공간군 ${sg}번으로 확인된 레코드가 없습니다 — 번호가 비어 있어 판정하지 못한 레코드가 ${unknown}건 있습니다`
+            + (seen.length ? `. 확인된 번호: ${seen.join(", ")}` : "")
         : upstream
           ? `‘${name}’에 공간군 ${sg}번으로 등록된 COD 레코드가 없습니다`
           : `‘${name}’ 레코드 ${found.length}건 중 공간군 ${sg}번은 없습니다`
             + (seen.length ? ` — 이 조성에 있는 번호: ${seen.join(", ")}` : "");
-      status(`${head} (${where})`
-        + (unknown ? ` 공간군 번호가 비어 있어 확인하지 못한 레코드가 ${unknown}건 있습니다.` : ""), true);
+      status(`${head} (${where})`, true);
       render();
       return;
     }
@@ -291,6 +304,17 @@
   const recordOf = i => state.groups[i][state.pick[i] || 0];
   const chosenRecords = () => state.chosen.map(recordOf);
 
+  /* A tick, and a change of which report of a phase to draw, both name a row
+     of the candidate list that was on screen when they happened; the CIF then
+     travels, and a search can replace that list while it is in the air. The
+     sequence number alone does not catch this. A search that was *already* in
+     flight when the row was clicked has raised the number before the click,
+     so the stale click carries the new search's number and passes. The list
+     object and the record itself are what the click actually belongs to, so
+     require both of them back unchanged. */
+  const stillShowing = (seq, groups, i, rec) =>
+    seq === searchSeq && state.groups === groups && !!state.groups[i] && recordOf(i) === rec;
+
   /* A name is only written where the database supports one; otherwise the
      candidate is identified by its space group and cell. */
   function groupLabel(g) {
@@ -318,12 +342,11 @@
       }
       if (pending(rec)) {
         status(`COD ${rec.id}의 CIF를 받는 중…`);
-        /* A tick is an index into the current candidate list, and a search
-           that finishes while the CIF is on its way builds a new one: the
-           same index would then tick a different phase. */
-        const seq = searchSeq;
+        /* A tick is an index into the candidate list it was made in; see
+           stillShowing. */
+        const seq = searchSeq, groups = state.groups;
         const err = await fetchCif(rec);
-        if (seq !== searchSeq) return;     /* the new search cleared the ticks */
+        if (!stillShowing(seq, groups, i, rec)) return;   /* this row is gone */
         if (err) { status(err, true); render(); return; }
         status("");
       }
@@ -681,7 +704,9 @@
           const rec = recordOf(i);
           if (state.chosen.includes(i) && pending(rec)) {
             status(`COD ${rec.id}의 CIF를 받는 중…`);
+            const seq = searchSeq, groups = state.groups;
             const err = await fetchCif(rec);
+            if (!stillShowing(seq, groups, i, rec)) return;
             if (err) { state.chosen = state.chosen.filter(x => x !== i); status(err, true); }
             else status("");
           }

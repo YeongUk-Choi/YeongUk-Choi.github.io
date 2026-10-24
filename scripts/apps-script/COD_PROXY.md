@@ -64,7 +64,10 @@ with a space group number and no cell, and with a cell and no number. The relay
 passes both through unchanged and counts neither as a failure; the viewer keeps
 them apart in what it reports - matched, drawable, and unjudged - because
 dropping them quietly turns "COD has this and we cannot draw it" into "COD does
-not have this".
+not have this". The distinction has to be in the **leading sentence**, not in a
+clause after it: an absence stated first is not undone by a qualification that
+follows. When every returned row is unjudged, nothing about the number was
+established, and the viewer says that rather than reporting an absence.
 
 Counts are **not reduced to an empirical ratio**. `V2O4` and `VO2` make different
 queries. The endpoint searches COD's exact formula field; it does not establish
