@@ -24,6 +24,8 @@
  * Set it in the Apps Script editor, never in this file; use a different code from
  * EDIT_CODE/PUSH_CODE. A POST form with action=xrdcheck and the correct code receives
  * only {ok:true}. The app files are public; this check controls the normal launch screen.
+ * COD's public read-only GET actions (`cod`, `cif`) are documented in COD_PROXY.md.
+ * Deploy this version before enabling those actions in the phase viewer.
  */
 
 var SHEET = 'movements';
@@ -91,6 +93,7 @@ function actionSheet() {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
+  if (p.action === 'cod' || p.action === 'cif') return handleCodProxy(p);
   if (p.action === 'xrdkey') return json({ ok: false, error: 'This XRD action is no longer supported.' });
   if (p.action === 'xrdcheck') return json({ ok: false, error: 'Use POST for XRD access.' });
   if (p.action === 'telemetry') return json(telemetryRead(p));
@@ -101,13 +104,16 @@ function doGet(e) {
    one request. Browser form posts from ppms.html still arrive as e.parameter. */
 function doPost(e) {
   var p = (e && e.parameter) || {};
+  if (p.action === 'cod' || p.action === 'cif') return codMethodError();
   /* A cached gate may still send the retired action. Never let it count as an incorrect
      inventory code (or collector code for JSON requests). */
   if (p.action === 'xrdkey') return json({ ok: false, error: 'This XRD action is no longer supported.' });
   try {
     var raw = e && e.postData && e.postData.contents;
+    if (typeof raw === 'string') raw = raw.trim();
     if (raw && raw.charAt(0) === '{') {
       var body = JSON.parse(raw);
+      if (body.action === 'cod' || body.action === 'cif') return codMethodError();
       if (body.action === 'xrdkey') throw new Error('This XRD action is no longer supported.');
       if (body.action === 'xrdcheck') throw new Error('Use a POST form for XRD access.');
       return json(handlePush(body));
@@ -514,4 +520,152 @@ function actDel(id) {
 
 function json(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ---- COD read-only proxy ----
+   Contract/deployment: scripts/apps-script/COD_PROXY.md. These routes run before
+   inventory authentication and never access sheets or lab-code counters. */
+var COD_BASE = 'https://www.crystallography.net/cod';
+var COD_ELEMENTS = ('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn ' +
+  'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu ' +
+  'Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm ' +
+  'Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og').split(' ');
+
+function codFault(code, message, retryable, upstreamStatus) {
+  var err = new Error(message);
+  err.codCode = code;
+  err.retryable = !!retryable;
+  if (upstreamStatus != null) err.upstreamStatus = upstreamStatus;
+  return err;
+}
+
+function codMethodError() {
+  return json({ ok: false, code: 'METHOD_NOT_ALLOWED', error: 'Use GET for COD requests.', retryable: false });
+}
+
+/* Parse the entire input, rather than extracting valid-looking substrings from
+   an unsupported formula. Preserve counts: exact COD formula search is not an
+   exhaustive search for all records with the same reduced composition. */
+function codFormula(input) {
+  if (typeof input !== 'string' || input.length > 120) {
+    throw codFault('INVALID_FORMULA', 'Enter a formula of at most 120 characters.', false);
+  }
+  var s = input.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, function (c) { return '₀₁₂₃₄₅₆₇₈₉'.indexOf(c); }).trim();
+  var counts = {}, pos = 0, tokens = 0;
+  while (pos < s.length) {
+    var match = /^\s*([A-Z][a-z]?)(\d+(?:\.\d{1,6})?)?/.exec(s.slice(pos));
+    if (!match || COD_ELEMENTS.indexOf(match[1]) < 0) {
+      throw codFault('INVALID_FORMULA', 'Use element symbols and positive counts (for example VO2 or La0.7Sr0.3MnO3). Parentheses, charges and hydrates are not supported.', false);
+    }
+    var count = match[2] == null ? 1 : Number(match[2]);
+    if (!(count > 0 && count <= 10000) || ++tokens > 40) {
+      throw codFault('INVALID_FORMULA', 'Formula counts must be positive and at most 10000.', false);
+    }
+    /* Integer millionths avoid 0.1 + 0.2 turning into a different query. */
+    counts[match[1]] = (counts[match[1]] || 0) + Math.round(count * 1000000);
+    if (counts[match[1]] > 10000000000) throw codFault('INVALID_FORMULA', 'Formula count is too large.', false);
+    pos += match[0].length;
+  }
+  var elements = Object.keys(counts).sort();
+  if (!elements.length) throw codFault('INVALID_FORMULA', 'Enter a chemical formula.', false);
+  if (counts.C) {
+    elements = ['C'].concat(counts.H ? ['H'] : [], elements.filter(function (el) { return el !== 'C' && el !== 'H'; }));
+  }
+  return elements.map(function (el) { var n = counts[el] / 1000000; return el + (n === 1 ? '' : String(n)); }).join(' ');
+}
+
+function codCacheGet(key) {
+  try {
+    /* Keep bulk COD data out of ScriptCache: inventory/push lockouts use that
+       instance and must not be displaced by the COD cache's item limit. */
+    var raw = CacheService.getUserCache().get(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (err) { return null; } // Cache eviction/unavailability is a miss, not a failed search.
+}
+
+function codCachePut(key, result, seconds) {
+  try {
+    var raw = JSON.stringify(result);
+    if (Utilities.newBlob(raw).getBytes().length <= 90000) {
+      CacheService.getUserCache().put(key, raw, seconds);
+    }
+  } catch (err) { /* A valid response is still useful when cache storage is unavailable. */ }
+}
+
+function codFetch(url, maxBytes) {
+  var response;
+  try {
+    response = UrlFetchApp.fetch(url, {
+      method: 'get', muteHttpExceptions: true, followRedirects: false,
+      validateHttpsCertificates: true, timeoutSeconds: 20
+    });
+  } catch (err) {
+    throw codFault('UPSTREAM_NETWORK', 'COD could not be reached. Try again later.', true);
+  }
+  var status = response.getResponseCode();
+  if (status !== 200) {
+    throw codFault('UPSTREAM_HTTP', 'COD returned HTTP ' + status + '.', status === 429 || status >= 500, status);
+  }
+  if (response.getBlob().getBytes().length > maxBytes) {
+    throw codFault('UPSTREAM_TOO_LARGE', 'The COD response exceeds this viewer\'s size limit.', false);
+  }
+  return response.getContentText('UTF-8');
+}
+
+function handleCodProxy(p) {
+  try {
+    if (p.action === 'cod') {
+      var formula = codFormula(p.formula);
+      var key = 'cod-v1:search:' + formula;
+      var hit = codCacheGet(key);
+      if (hit && hit.ok === true && hit.formula === formula && Array.isArray(hit.records)) {
+        hit.cached = true;
+        return json(hit);
+      }
+      var url = COD_BASE + '/result?format=json&formula=' + encodeURIComponent(formula);
+      var raw = codFetch(url, 1024 * 1024), records;
+      try { records = JSON.parse(raw); } catch (err) {
+        throw codFault('UPSTREAM_INVALID', 'COD returned invalid or incomplete JSON. Try again later.', true);
+      }
+      if (!Array.isArray(records) || records.some(function (r) {
+        return !r || typeof r !== 'object' || !/^[1-9]\d{6}$/.test(String(r.file)) || typeof r.formula !== 'string';
+      })) {
+        throw codFault('UPSTREAM_INVALID', 'COD returned an unexpected search response.', true);
+      }
+      if (records.length > 500) throw codFault('TOO_MANY_RESULTS', 'COD returned more than 500 records. No records were silently truncated.', false);
+      var result = { ok: true, status: records.length ? 'ok' : 'empty', formula: formula,
+        query_mode: 'exact_formula', count: records.length, records: records,
+        fetched_at: new Date().toISOString(), cached: false, source_url: url };
+      codCachePut(key, result, records.length ? 21600 : 300);
+      return json(result);
+    }
+
+    var id = String(p.id || '');
+    if (!/^[1-9]\d{6}$/.test(id)) throw codFault('INVALID_ID', 'Enter a seven-digit COD ID.', false);
+    var cifKey = 'cod-v1:cif:' + id;
+    var saved = codCacheGet(cifKey);
+    var cif;
+    if (saved && saved.id === id && typeof saved.cif === 'string') {
+      cif = saved.cif;
+    } else {
+      cif = codFetch(COD_BASE + '/' + id + '.cif', 512 * 1024);
+      /* Transport sanity checks only; the drawing code must still validate the
+         complete CIF and reject structures it cannot interpret. */
+      var block = new RegExp('^data_' + id + '(?:\\s|$)', 'm');
+      var cellTags = ['length_a', 'length_b', 'length_c', 'angle_alpha', 'angle_beta', 'angle_gamma'];
+      if (!block.test(cif) || cellTags.some(function (tag) {
+        return !(new RegExp('^_cell_' + tag + '\\s+\\S+', 'm')).test(cif);
+      }) || /<!doctype\s+html|<html[\s>]/i.test(cif)) {
+        throw codFault('UPSTREAM_INVALID', 'COD returned an unexpected or incomplete CIF.', true);
+      }
+      codCachePut(cifKey, { id: id, cif: cif }, 21600);
+    }
+    return ContentService.createTextOutput(cif).setMimeType(ContentService.MimeType.TEXT);
+  } catch (err) {
+    var error = { ok: false, code: err.codCode || 'PROXY_ERROR',
+      error: err.codCode ? err.message : 'The COD proxy could not complete this request.',
+      retryable: err.codCode ? err.retryable : true };
+    if (err.upstreamStatus != null) error.upstream_status = err.upstreamStatus;
+    return json(error);
+  }
 }
