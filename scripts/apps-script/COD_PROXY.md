@@ -59,6 +59,13 @@ so the client must filter the returned rows by `sgNumber` as well; the viewer
 does (`PhaseCore.filterBySg`). Do not infer a phase's absence from an upstream
 filter alone.
 
+**A record the client cannot judge is not an absence either.** COD rows come
+with a space group number and no cell, and with a cell and no number. The relay
+passes both through unchanged and counts neither as a failure; the viewer keeps
+them apart in what it reports - matched, drawable, and unjudged - because
+dropping them quietly turns "COD has this and we cannot draw it" into "COD does
+not have this".
+
 Counts are **not reduced to an empirical ratio**. `V2O4` and `VO2` make different
 queries. The endpoint searches COD's exact formula field; it does not establish
 that all phases or all equivalent composition spellings have been found. The

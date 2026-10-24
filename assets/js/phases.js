@@ -76,8 +76,17 @@
   /* A COD search row and a cached entry describe the same thing in different
      words. Everything the viewer compares arithmetically is made a number
      here: COD sends "9.083", and a string cell silently breaks lattice
-     grouping - every record would become its own candidate. */
-  const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+     grouping - every record would become its own candidate.
+
+     An absent value stays absent. Number(null) and Number("") are both 0, so
+     coercing first would turn "this record does not say" into "this record
+     says zero" - a space group number COD never assigns, read as one it
+     did. */
+  const num = v => {
+    if (v == null || (typeof v === "string" && !v.trim())) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
   function fromCodRow(r) {
     const e = {
       cod_id: String(r.file), formula: r.formula, spacegroup: r.sg || "?", sg_number: num(r.sgNumber),
@@ -92,9 +101,13 @@
     return e;
   }
 
-  /* COD rows carry no cell for a few records; without a lattice there is
-     nothing to group or draw, so they are dropped and counted out loud. */
+  /* A COD row with no cell cannot be grouped or drawn, and a row with no
+     space group number cannot be shown to carry the number that was asked
+     for. Neither kind is thrown away on arrival: a search that ends with
+     nothing on screen has to be able to say which of the two happened, or
+     "we cannot draw it" is read as "COD does not have it". */
   const hasCell = e => [e.a, e.b, e.c, e.alpha, e.beta, e.gamma].every(v => v != null && v > 0);
+  const sgKnown = e => Number.isFinite(e.sg_number) && e.sg_number >= 1 && e.sg_number <= 230;
 
   async function relaySearch(name, sg) {
     const q = `action=cod&formula=${encodeURIComponent(name)}` + (sg == null ? "" : `&sg=${sg}`);
@@ -102,12 +115,17 @@
     if (!r.ok) throw new Error(`중계 서버가 HTTP ${r.status}을 돌려주었습니다`);
     const j = await r.json();
     if (!j || j.ok !== true) throw new Error((j && j.error) || "중계 서버가 오류를 돌려주었습니다");
-    const rows = (j.records || []).map(fromCodRow);
-    const usable = rows.filter(hasCell);
     return { formula: j.formula || name, fetched: (j.fetched_at || "").slice(0, 10),
-      source: "COD (relay)", cached: !!j.cached, dropped: rows.length - usable.length,
-      entries: usable };
+      source: "COD (relay)", cached: !!j.cached, entries: (j.records || []).map(fromCodRow) };
   }
+
+  /* Only the newest search may write. Two searches are in flight whenever the
+     reader types a second one before the first answers, and the answers can
+     arrive in either order: a cached relay reply comes back in milliseconds
+     and a cold one takes seconds. Without this, an older answer lands on top
+     of a newer one while the composition and number on screen - and in the
+     exported file name - still belong to the newer one. */
+  let searchSeq = 0;
 
   /* The two inputs are a composition and, optionally, a space group number.
      The number is only ever a filter on records; it never changes what is
@@ -124,21 +142,32 @@
       status("공간군 번호는 1부터 230까지의 정수입니다. 비워 두면 그 조성의 전부를 찾습니다.", true);
       return;                              /* the figure on screen is left alone */
     }
-    state.formula = name; state.sg = sg;
+    const seq = ++searchSeq;
+    const mine = () => seq === searchSeq;
+    /* The search this page says it is showing is set together with the
+       records it is showing, never before them. */
+    const commit = d => { state.formula = name; state.sg = sg; state.data = d; };
     status(sg == null ? "COD 캐시를 읽는 중…" : `COD 캐시를 읽는 중… (공간군 ${sg}번)`);
-    let live = false;
+    let live = false, data = null;
     try {
       const r = await fetch(`data/phases/${encodeURIComponent(name)}.json`, { cache: "no-store" });
+      if (!mine()) return;
       if (!r.ok) throw new Error("not cached");
-      state.data = await r.json();
+      data = await r.json();
+      if (!mine()) return;
     } catch (e) {
-      state.data = null;
+      if (!mine()) return;
+      data = null;
       if (relay()) {
         status(`받아 둔 조성이 아니어서 COD에 직접 물어보는 중… (‘${name}’${sg == null ? "" : `, 공간군 ${sg}번`})`);
-        try { state.data = await relaySearch(name, sg); live = true; }
-        catch (err) { state.data = null; status(`COD 검색이 되지 않았습니다 — ${err.message}`, true); }
+        let err = null;
+        try { data = await relaySearch(name, sg); live = true; }
+        catch (e2) { data = null; err = e2; }
+        if (!mine()) return;
+        if (err) status(`COD 검색이 되지 않았습니다 — ${err.message}`, true);
       }
-      if (!state.data) {
+      if (!data) {
+        commit(null);
         state.groups = []; state.chosen = []; state.pick = {};
         render();
         if (!relay()) {
@@ -148,11 +177,20 @@
         return;
       }
     }
+    commit(data);
+    /* Four counts, because they answer four different questions: what the
+       search returned, how much of it carries the requested number, how much
+       of that can be drawn, and how much could not be judged at all. Rolling
+       the last two into the first turns "COD has it but we cannot use it"
+       into "COD does not have it". */
+    const found = data.entries || [];
+    const matched = C.filterBySg(found, sg);
+    const drawable = matched.filter(hasCell);
+    const noCell = matched.length - drawable.length;
+    const unknown = sg == null ? 0 : found.filter(e => !sgKnown(e)).length;
     /* One COD record is one publication, not one phase. Group first, then let
        the reader choose which record of a phase to draw. */
-    const all = state.data.entries;
-    const kept = C.filterBySg(all, sg);
-    const recs = kept.map(e => Object.assign({ id: String(e.cod_id), sgNumber: e.sg_number, cell: e }, e));
+    const recs = drawable.map(e => Object.assign({ id: String(e.cod_id), sgNumber: e.sg_number, cell: e }, e));
     state.groups = C.groupPhases(recs);
     state.pick = {}; state.chosen = []; state.ref = 0;
     state.groups.forEach((g, i) => { state.pick[i] = 0; });
@@ -160,29 +198,36 @@
        tolerance, which is evidence and not proof that two records are the
        same phase. */
     const where = live
-      ? `COD 즉석 검색${state.data.cached ? " (중계 캐시)" : ""}`
-      : `받아 둔 날짜 ${state.data.fetched}`;
-    const dropped = state.data.dropped ? `, 격자가 없어 뺀 레코드 ${state.data.dropped}건` : "";
+      ? `COD 즉석 검색${data.cached ? " (중계 캐시)" : ""}`
+      : `받아 둔 날짜 ${data.fetched}`;
+    const notes = (noCell ? `, 격자값이 없어 그릴 수 없는 레코드 ${noCell}건` : "")
+      + (unknown ? `, 공간군 번호가 없어 확인하지 못한 레코드 ${unknown}건` : "");
     /* Where the filter was applied decides what the count can honestly say.
        The committed cache holds the whole composition, so it can report "N of
        M"; a relayed search was already narrowed at COD, so the records that
        did not match were never sent and cannot be counted here. */
     const upstream = live && sg != null;
     /* An empty result of a filter is a finding, not a failure: it says the
-       database has this composition but not under that number. */
+       database has this composition but not under that number. It says that
+       only when the records were actually judged - a record held back for a
+       missing cell or a missing number is reported as such instead. */
     if (sg != null && !recs.length) {
-      const seen = Array.from(new Set(all.map(e => e.sg_number).filter(v => v != null))).sort((x, y) => x - y);
-      status(upstream
-        ? `‘${name}’에 공간군 ${sg}번으로 등록된 COD 레코드가 없습니다 (${where})`
-        : `‘${name}’ 레코드 ${all.length}건 중 공간군 ${sg}번은 없습니다`
-          + (seen.length ? ` — 이 조성에 있는 번호: ${seen.join(", ")} (${where})` : ` (${where})`), true);
+      const seen = Array.from(new Set(found.filter(sgKnown).map(e => e.sg_number))).sort((x, y) => x - y);
+      const head = matched.length
+        ? `‘${name}’에 공간군 ${sg}번 COD 레코드 ${matched.length}건이 있지만, 격자값이 없어 그릴 수 없습니다`
+        : upstream
+          ? `‘${name}’에 공간군 ${sg}번으로 등록된 COD 레코드가 없습니다`
+          : `‘${name}’ 레코드 ${found.length}건 중 공간군 ${sg}번은 없습니다`
+            + (seen.length ? ` — 이 조성에 있는 번호: ${seen.join(", ")}` : "");
+      status(`${head} (${where})`
+        + (unknown ? ` 공간군 번호가 비어 있어 확인하지 못한 레코드가 ${unknown}건 있습니다.` : ""), true);
       render();
       return;
     }
     const picked = sg == null ? `COD 레코드 ${recs.length}건`
       : upstream ? `공간군 ${sg}번 COD 레코드 ${recs.length}건`
-      : `COD 레코드 ${all.length}건 중 공간군 ${sg}번 ${recs.length}건`;
-    status(`${picked} → 유사 격자 후보 ${state.groups.length}개 (${where}${dropped})`);
+      : `COD 레코드 ${found.length}건 중 공간군 ${sg}번 ${recs.length}건`;
+    status(`${picked} → 유사 격자 후보 ${state.groups.length}개 (${where}${notes})`);
     render();
   }
 
@@ -273,7 +318,12 @@
       }
       if (pending(rec)) {
         status(`COD ${rec.id}의 CIF를 받는 중…`);
+        /* A tick is an index into the current candidate list, and a search
+           that finishes while the CIF is on its way builds a new one: the
+           same index would then tick a different phase. */
+        const seq = searchSeq;
         const err = await fetchCif(rec);
+        if (seq !== searchSeq) return;     /* the new search cleared the ticks */
         if (err) { status(err, true); render(); return; }
         status("");
       }

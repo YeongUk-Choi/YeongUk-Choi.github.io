@@ -39,6 +39,7 @@ const asCodRow = e => ({
    behaviour for a parameter it does not accept: the filter is dropped and the
    whole search comes back, which is exactly the case the page has to catch. */
 let relayMode = "filter";
+let cifDelay = 0;                          /* a CIF that is still on its way */
 const calls = { xrdcheck: 0, cod: [], cif: [] };
 
 const types = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
@@ -68,22 +69,32 @@ const server = createServer((req, res) => {
       const id = url.searchParams.get("id");
       calls.cif.push(id);
       const hit = cache.entries.find(e => String(e.cod_id) === String(id));
-      return hit ? send(200, "text/plain", hit.cif)
+      const reply = () => hit ? send(200, "text/plain", hit.cif)
         : send(200, "application/json", JSON.stringify({ ok: false, code: "UPSTREAM_INVALID", error: "no such record", retryable: false }));
+      return cifDelay ? void setTimeout(reply, cifDelay) : reply();
     }
     if (action === "cod") {
       const sg = url.searchParams.get("sg");
       calls.cod.push({ formula: url.searchParams.get("formula"), sg, url: req.url });
       const n = sg == null ? null : Number(sg);
-      const rows = cache.entries
+      let rows = cache.entries
         .filter(e => relayMode === "ignore-sg" || n == null || e.sg_number === n)
         .map(asCodRow);
-      return send(200, "application/json", JSON.stringify({
+      /* Two kinds of record COD really does hold, both of which end with an
+         empty figure for different reasons: the number is there but the cell
+         is not, and the cell is there but the number is not. */
+      if (relayMode === "no-cell") rows = rows.map(r => ({ ...r, a: null, b: null, c: null }));
+      if (relayMode === "no-sg") rows = cache.entries.map(asCodRow).map(r => ({ ...r, sg: "", sgNumber: null }));
+      const reply = () => send(200, "application/json", JSON.stringify({
         ok: true, status: rows.length ? "ok" : "empty", formula: url.searchParams.get("formula"),
         sg_number: n, query_mode: n ? "exact_formula+space_group_number" : "exact_formula",
         count: rows.length, records: rows, fetched_at: new Date().toISOString(), cached: false,
         source_url: "https://www.crystallography.net/cod/result?format=json"
       }));
+      /* A slow answer to one number and a fast answer to the next is how the
+         two answers change places on the way back. */
+      if (relayMode === "slow-14" && n === 14) return void setTimeout(reply, 900);
+      return reply();
     }
     return send(200, "application/json", JSON.stringify({ ok: false, error: "Unknown action." }));
   }
@@ -235,6 +246,74 @@ try {
   ok("the figure cannot show a phase outside the filter",
     await run(`document.querySelectorAll("#pv-list .pv-row").length`) === 1);
   relayMode = "filter";
+
+  console.log("an empty figure says which kind of empty it is");
+  /* A record that matches the number but carries no cell is a record COD
+     has: saying "not registered" here would send the reader looking for a
+     phase the database already lists. */
+  relayMode = "no-cell";
+  await search("TiO2", "14");
+  line = await waitStatus(/14번/);
+  ok("a matching record with no cell is reported as undrawable, not as absent",
+    /공간군 14번 COD 레코드 2건이 있지만, 격자값이 없어 그릴 수 없습니다/.test(line), line);
+  ok("nothing is drawn from a record with no cell",
+    await run(`document.querySelectorAll("#pv-list .pv-row").length`) === 0);
+
+  /* A record with a cell but no space group number cannot be shown to carry
+     the requested one, so it is left out - and said out loud, because the
+     number it does not carry may well be the one that was asked for. */
+  relayMode = "no-sg";
+  await search("TiO2", "14");
+  line = await waitStatus(/14번/);
+  ok("records with no space group number are counted out loud, not silently",
+    /등록된 COD 레코드가 없습니다/.test(line) && /공간군 번호가 비어 있어 확인하지 못한 레코드가 11건 있습니다/.test(line), line);
+
+  console.log("two searches in flight at once");
+  /* The reader types a second search before the first answers, and the
+     answers come back in the other order. Only the newest may be shown, and
+     the composition and number on screen have to be the newest one's: the
+     exported file name is built from them. */
+  relayMode = "slow-14";
+  await run(`(() => { window.__dl = [];
+    const c = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () { window.__dl.push(this.download); };
+    window.__unhook = () => { HTMLAnchorElement.prototype.click = c; }; })()`);
+  await search("TiO2", "14");
+  await sleep(150);
+  await search("TiO2", "136");
+  line = await waitStatus(/공간군 136번/);
+  ok("the newer search answers first and is shown", /공간군 136번 COD 레코드 4건/.test(line), line);
+  await sleep(1400);                       /* the older answer lands in here */
+  ok("the older answer does not replace the newer result",
+    /공간군 136번 COD 레코드 4건/.test(await text("#pv-status")), await text("#pv-status"));
+  ok("the older answer does not replace the newer candidate list",
+    /42\/m n m/.test(await text("#pv-list")) && !/21\/c/.test(await text("#pv-list")), await text("#pv-list"));
+
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  for (let i = 0; i < 40 && !(await run(`document.querySelectorAll("#pv-figure svg").length`)); i++) await sleep(100);
+  await run(`document.querySelector("#pv-svg").click()`);
+  ok("the exported file is named after the search that is on screen",
+    (await run(`window.__dl[0] || ""`)) === "TiO2-sg136-reciprocal.svg", await run(`JSON.stringify(window.__dl)`));
+  await run(`window.__unhook()`);
+  relayMode = "filter";
+
+  /* The same race one step later: a tick is an index into the candidate list
+     that was on screen when it was ticked, and a search can replace that list
+     while the CIF is in the air. */
+  await search("TiO2", "136");             /* a fresh list, nothing ticked yet */
+  await waitStatus(/공간군 136번/);
+  cifDelay = 800;
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  await sleep(120);
+  await search("VO2", "14");
+  line = await waitStatus(/공간군 14번 2건/);
+  await sleep(1200);                       /* the CIF for the old tick lands */
+  ok("a CIF that arrives after a new search draws nothing",
+    (await run(`document.querySelectorAll("#pv-figure svg").length`)) === 0
+    && (await run(`document.querySelectorAll("#pv-list input:checked").length`)) === 0,
+    await text("#pv-status"));
+  ok("the new search keeps its own line", /공간군 14번 2건/.test(await text("#pv-status")), await text("#pv-status"));
+  cifDelay = 0;
 
   console.log("ending and resuming a session");
   await run(`document.querySelector("#pv-lock").click()`);
