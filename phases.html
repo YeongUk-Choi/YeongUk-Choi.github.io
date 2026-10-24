@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Crystal Phase Viewer — YeongUk Choi</title>
+<meta name="theme-color" content="#050507">
+<meta name="description" content="Type a composition, pick phases from the Crystallography Open Database, and draw their unit cells and reciprocal lattices side by side or in one frame.">
+<link rel="canonical" href="https://yeonguk-choi.github.io/phases.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="YeongUk Choi">
+<meta property="og:title" content="Crystal Phase Viewer — YeongUk Choi">
+<meta property="og:description" content="Composition in, COD phases out: unit cells and reciprocal lattices, up to ten at a time.">
+<meta property="og:url" content="https://yeonguk-choi.github.io/phases.html">
+<meta property="og:image" content="https://yeonguk-choi.github.io/assets/img/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="assets/css/site.css">
+<link rel="stylesheet" href="assets/css/phases.css">
+<script src="data/profile.js"></script>
+<script src="assets/js/site.js"></script>
+<script src="assets/js/phase-core.js"></script>
+<script src="assets/js/phases.js"></script>
+</head>
+<body data-page="phases">
+<div class="bg-glow"></div><div class="bg-noise"></div>
+<nav class="nav"><div class="wrap">
+  <a class="brand" href="index.html"><span class="dot"></span><span data-profile="name">UK</span></a>
+  <div class="nav-links"><a href="index.html" data-page="home">Home</a><a href="schedule.html" data-page="schedule">Schedule</a><a href="measurements.html" data-page="measurements">Measurements</a><a href="publications.html" data-page="publications">Papers</a><a href="cv.html" data-page="cv">CV</a><a href="focus.html" data-page="focus">Focus</a><a href="materials.html" data-page="materials">Materials</a><a href="software.html" data-page="software">Software</a><a href="ppms.html" data-page="ppms">PPMS</a></div>
+  <a class="nav-menu" href="index.html">Menu</a>
+</div></nav>
+<main><div class="wrap">
+
+<div class="eyebrow">Crystal Phase Viewer</div>
+<h1 class="page">조성을 넣으면, 그 물질의 상들을 그립니다.</h1>
+<p class="lede">조성을 입력하면 <a href="https://www.crystallography.net/cod/" target="_blank" rel="noreferrer">Crystallography Open Database</a>에 등록된 구조들을 상(phase)별로 묶어 보여 줍니다. 보고 싶은 것을 체크하면 단위격자와 역격자를 그립니다. 계정도, 설치도 필요 없습니다.</p>
+
+<form id="pv-form" class="pv-form" autocomplete="off">
+  <input id="pv-input" type="text" placeholder="VO2" aria-label="조성" spellcheck="false">
+  <button type="submit">상 찾기</button>
+  <span class="pv-have-label">지금 받아 둔 조성: <span id="pv-have"></span></span>
+</form>
+<p id="pv-status" class="pv-status" role="status" aria-live="polite"></p>
+
+<div class="pv-layout">
+  <aside class="pv-side">
+    <div class="pv-side-head"><span>구조 후보</span><span id="pv-count" class="pv-count">0 / 10</span></div>
+    <div id="pv-list" class="pv-list"></div>
+    <p class="pv-note">COD는 논문 한 편을 레코드 하나로 저장합니다. 같은 상을 여러 논문이 보고하면 하나로 묶고, 어느 보고를 쓸지 고를 수 있게 둡니다. 공간군이 같아도 격자가 다르면 다른 상으로 둡니다 — VO₂의 M2와 B가 둘 다 C2/m입니다.</p>
+  </aside>
+  <section class="pv-main">
+    <div class="pv-toolbar">
+      <div class="pv-seg"><button type="button" data-view="reciprocal" class="on">역공간</button><button type="button" data-view="real">실공간</button></div>
+      <div class="pv-seg"><button type="button" data-mode="panels" class="on">나란히</button><button type="button" data-mode="overlay">겹쳐보기</button></div>
+      <button type="button" id="pv-paper" class="pv-btn">흰 배경</button>
+      <button type="button" id="pv-reset" class="pv-btn">방향 초기화</button>
+      <button type="button" id="pv-svg" class="pv-btn">SVG 저장</button>
+    </div>
+    <div id="pv-figure" class="pv-figure"></div>
+    <div class="pv-legend">
+      <p><b>역공간</b> — 점 하나가 회절 반사 하나입니다. 위치는 <i>h</i>a* + <i>k</i>b* + <i>l</i>c*, 크기는 구조인자의 세기입니다. 소광으로 사라지는 반사는 그리지 않습니다. 점 크기는 <b>원자번호만으로 계산한 상대값</b>이라 회절 강도 계산이 아닙니다 — 산란인자의 각도 의존성, 열진동, 편광, 흡수가 모두 빠져 있습니다.</p>
+      <p><b>실공간</b> — 큰 구가 첫 원소(보통 양이온), 작은 회색 구가 나머지입니다. 3.3 Å 아래의 양이온–양이온 거리만 선으로 잇고, 3.0 Å 아래는 굵게 그립니다. VO₂에서 금속상과 절연상을 가르는 것이 바로 이 거리입니다.</p>
+      <p><b>겹쳐보기</b>는 세 개까지입니다. CIF에는 격자만 있고 결정이 어느 방향으로 놓였는지는 없으므로, 기준 상의 격자 위에 다른 상을 올리는 정수 변환을 찾아 적용합니다. 찾은 변환과 어긋남을 그림 아래에 적습니다. <b>기하학적으로 맞는 배치를 제안하는 것이지, 군–부분군 관계를 증명하는 것이 아닙니다.</b></p>
+      <p class="pv-caveat">구조 데이터 출처: Crystallography Open Database (공개 자료). 각 후보의 COD 번호를 눌러 원 논문을 확인하십시오.</p>
+    </div>
+  </section>
+</div>
+
+</div></main>
+<footer><div class="wrap" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px">
+  <span>© <span data-year></span> <span data-profile="name">UK</span> · <span data-profile-aff></span></span>
+  <span class="subtle"><a class="qr-link" href="assets/img/qr-site.svg" data-qr>Show QR</a> · Static site · no tracking</span>
+</div></footer>
+</body>
+</html>

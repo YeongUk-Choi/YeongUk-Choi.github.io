@@ -1,0 +1,55 @@
+/* Crystal Phase Viewer. Site tokens come from site.css; only the series
+   colours are local, and they are the validated categorical slots - see the
+   note in assets/js/phases.js for why there are three of them and not ten. */
+
+.pv-form { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:22px 0 6px; }
+.pv-form input { background:var(--glass); border:1px solid var(--line); color:var(--fg); border-radius:12px; padding:11px 14px; font:inherit; font-size:15px; width:200px; }
+.pv-form input:focus { outline:none; border-color:var(--violet-2); }
+.pv-form button { background:var(--fg); color:#07070b; border:0; border-radius:12px; padding:11px 18px; font:inherit; font-weight:600; cursor:pointer; }
+.pv-have-label { color:var(--fg-3); font-size:13px; }
+#pv-have { color:var(--fg-2); font-family:var(--mono); }
+.pv-status { min-height:20px; color:var(--fg-2); font-size:13px; margin:6px 0 14px; }
+.pv-status.warn { color:var(--orange); }
+
+.pv-layout { display:grid; grid-template-columns:340px minmax(0,1fr); gap:22px; align-items:start; }
+@media (max-width:900px) { .pv-layout { grid-template-columns:1fr; } }
+
+.pv-side { background:var(--glass); border:1px solid var(--line); border-radius:var(--radius); padding:14px; }
+.pv-side-head { display:flex; justify-content:space-between; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--fg-3); margin-bottom:10px; }
+.pv-count { font-family:var(--mono); color:var(--fg-2); }
+.pv-list { display:flex; flex-direction:column; gap:4px; }
+.pv-row { display:grid; grid-template-columns:auto 1fr; gap:8px 10px; align-items:center; padding:9px 10px; border-radius:var(--radius-sm); border:1px solid transparent; }
+.pv-row.on { background:var(--glass-2); border-color:var(--line); }
+.pv-row input[type=checkbox] { width:16px; height:16px; accent-color:#3987e5; cursor:pointer; }
+.pv-head { display:flex; flex-direction:column; gap:2px; cursor:pointer; }
+.pv-sg { font-size:14px; color:var(--fg); }
+.pv-cell { font-size:12px; color:var(--fg-3); font-family:var(--mono); }
+.pv-name { font-size:12px; color:var(--violet-2); }
+.pv-pick, .pv-multi, .pv-link { grid-column:2; }
+.pv-pick { background:var(--glass-2); border:1px solid var(--line); color:var(--fg-2); border-radius:9px; padding:5px 7px; font:inherit; font-size:12px; }
+.pv-multi, .pv-link { font-size:11px; color:var(--fg-3); }
+.pv-link { text-decoration:none; }
+.pv-link:hover { color:var(--fg-2); }
+.pv-note { font-size:12px; line-height:1.6; color:var(--fg-3); margin:14px 2px 0; }
+
+.pv-main { min-width:0; }
+.pv-toolbar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.pv-seg { display:flex; background:var(--glass); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.pv-seg button, .pv-btn { background:none; border:0; color:var(--fg-3); font:inherit; font-size:13px; padding:8px 14px; cursor:pointer; }
+.pv-seg button.on { background:var(--glass-2); color:var(--fg); }
+.pv-btn { background:var(--glass); border:1px solid var(--line); border-radius:12px; }
+.pv-btn.on { color:#07070b; background:var(--fg); }
+
+.pv-figure { background:var(--glass); border:1px solid var(--line); border-radius:var(--radius); padding:14px; min-height:360px; touch-action:none; cursor:grab; }
+.pv-figure.paper { background:#fff; }
+.pv-figure:active { cursor:grabbing; }
+.pv-empty { color:var(--fg-3); font-size:14px; padding:40px 6px; text-align:center; }
+.pv-grid { display:flex; flex-wrap:wrap; gap:10px; }
+.pv-svg { display:block; max-width:100%; height:auto; }
+.pv-relation { margin-top:10px; display:flex; flex-direction:column; gap:6px; }
+.pv-relation p { font-size:12.5px; line-height:1.6; color:var(--fg-2); margin:0; }
+.pv-relation code { font-family:var(--mono); font-size:11.5px; color:var(--fg); background:var(--glass-2); padding:1px 6px; border-radius:6px; }
+.pv-caveat { color:var(--fg-3); }
+.pv-legend { margin-top:16px; display:flex; flex-direction:column; gap:8px; }
+.pv-legend p { font-size:12.5px; line-height:1.7; color:var(--fg-3); margin:0; }
+.pv-legend b { color:var(--fg-2); }
