@@ -694,3 +694,26 @@ function handleCodProxy(p) {
     return json(error);
   }
 }
+
+/* Editor-only probe, not reachable from the web app. Every fetch failure reaches the
+   browser as UPSTREAM_NETWORK, which cannot tell "COD is down" from "this project was
+   never granted permission to call UrlFetchApp" — the second is what a fresh deployment
+   of this file hits, because the COD proxy is the first code here to leave Google.
+   Run it from the editor (Run ▶ checkExternalAccess) and read the execution log:
+     "HTTP 200, … bytes"  → the network path works; a failing page is COD's fault.
+     "THREW: …permission…" → accept the authorization prompt, then deploy a new version.
+   It touches no sheet and no counter, and needs no deployment of its own. */
+function checkExternalAccess() {
+  var out;
+  try {
+    var r = UrlFetchApp.fetch(COD_BASE + '/result?format=json&formula=O2%20V', {
+      method: 'get', muteHttpExceptions: true, followRedirects: false,
+      validateHttpsCertificates: true, timeoutSeconds: 20
+    });
+    out = 'HTTP ' + r.getResponseCode() + ', ' + r.getBlob().getBytes().length + ' bytes';
+  } catch (err) {
+    out = 'THREW: ' + ((err && err.message) || err);
+  }
+  Logger.log(out);
+  return out;
+}
