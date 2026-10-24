@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Crystal Phase Viewer">
+  <defs>
+    <linearGradient id="pv-edge" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#c4b5fd"/>
+    </linearGradient>
+    <linearGradient id="pv-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2036"/>
+      <stop offset="1" stop-color="#0b0d14"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="url(#pv-bg)" stroke="rgba(255,255,255,0.14)"/>
+  <!-- One oblique unit cell with a lattice point on every corner: the thing this
+       viewer draws. The three edges meeting at the far corner are dimmed so the
+       box reads as a solid rather than as a flat net. -->
+  <g fill="none" stroke="url(#pv-edge)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path opacity=".28" d="M23.5 41.8 L13.7 52.7 M23.5 41.8 L50.3 41.8 M23.5 41.8 L23.5 10"/>
+    <path d="M13.7 52.7 L40.5 52.7 L40.5 21 L13.7 21 Z"/>
+    <path d="M13.7 21 L23.5 10 L50.3 10 L50.3 41.8 L40.5 52.7 M40.5 21 L50.3 10"/>
+  </g>
+  <g fill="#93c5fd">
+    <circle cx="13.7" cy="52.7" r="2.6"/><circle cx="40.5" cy="52.7" r="2.6"/>
+    <circle cx="40.5" cy="21" r="2.6"/><circle cx="13.7" cy="21" r="2.6"/>
+    <circle cx="50.3" cy="41.8" r="2.6"/><circle cx="50.3" cy="10" r="2.6"/>
+    <circle cx="23.5" cy="10" r="2.6"/><circle cx="23.5" cy="41.8" r="2.6" opacity=".28"/>
+  </g>
+</svg>

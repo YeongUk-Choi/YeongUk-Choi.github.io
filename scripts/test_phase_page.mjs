@@ -388,6 +388,25 @@ try {
   await enterCode(CODE);
   await open();
   ok("a passed code lasts the tab, without asking again", await shown("#pv-app") && !(await shown("#pv-gate")));
+
+  /* The Software card is how anyone actually arrives here. A link to a page in
+     this site that is marked as a download hands over the file instead of
+     opening it, and the saved copy has no stylesheet next to it - so the bug
+     shows up as an unstyled page, not as a missing one. */
+  console.log("the Software card opens the viewer");
+  await send("Page.navigate", { url: `http://127.0.0.1:${port}/software.html` });
+  await sleep(900);
+  const card = await run(`(() => {
+    const c = [...document.querySelectorAll(".sw-card")].find(x => /Crystal Phase Viewer/.test(x.textContent));
+    if (!c) return null;
+    const a = c.querySelector("a.btn.primary");
+    return { link: !!a, href: a && a.getAttribute("href"), download: !!a && a.hasAttribute("download"),
+             icon: !!c.querySelector("img.sw-icon") };
+  })()`);
+  ok("the card is on the page with a button", card && card.link, JSON.stringify(card));
+  ok("the button points at the viewer", card && card.href === "phases.html", JSON.stringify(card));
+  ok("the button opens the page instead of downloading it", card && card.download === false, JSON.stringify(card));
+  ok("the card carries an icon of its own", card && card.icon, JSON.stringify(card));
 } finally {
   ws.close();
   chrome.kill();

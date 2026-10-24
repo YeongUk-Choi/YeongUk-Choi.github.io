@@ -144,7 +144,8 @@ try {
     ["/data/profile.js", "text/javascript"], ["/data/software.js", "text/javascript"],
     ["/assets/img/software/xrd-studio.jpg", "image/jpeg"], ["/assets/img/software/rietveld-auto.jpg", "image/jpeg"],
     ["/assets/img/software/phase-viewer.jpg", "image/jpeg"],
-    ["/assets/img/software/rietveld-auto-icon.svg", "image/svg+xml"], ["/assets/img/qr-site.svg", "image/svg+xml"],
+    ["/assets/img/software/rietveld-auto-icon.svg", "image/svg+xml"],
+    ["/assets/img/software/phase-viewer-icon.svg", "image/svg+xml"], ["/assets/img/qr-site.svg", "image/svg+xml"],
   ]);
   let origin;
   server = createServer(async (request, response) => {

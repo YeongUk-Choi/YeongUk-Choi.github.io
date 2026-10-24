@@ -60,6 +60,8 @@ window.SITE.software = {
       tagline: "Type a composition \u2014 and a space group number if you want one phase \u2014 and draw the structures the Crystallography Open Database has for it.",
       kind: "web",
       sub: "Runs in your browser \u00b7 unit cells and reciprocal lattices",
+      icon: "assets/img/software/phase-viewer-icon.svg",
+      launch: "phases.html",
       status: "released",
       version: "1.0", date: "2026-10-24", license: "",
       image: "assets/img/software/phase-viewer.jpg",
@@ -79,7 +81,7 @@ window.SITE.software = {
               "no angle-dependent scattering factors, thermal motion, polarisation or absorption. " +
               "A matching lattice metric is evidence that two records are the same phase, not proof, and an " +
               "overlay proposes a geometric relation rather than deriving a group\u2013subgroup one.",
-      links: [{label: "Open in browser", href: "phases.html", primary: true}]
+      links: [{label: "Open in browser", href: "phases.html", primary: true, page: true}]
     },
     {
       name: "Rietveld Auto",
