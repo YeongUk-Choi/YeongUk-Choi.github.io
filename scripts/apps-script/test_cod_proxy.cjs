@@ -138,6 +138,58 @@ test('invalid and unsupported formulas fail before any network/cache/service ope
   }
 });
 
+test('a space group number is validated here and sent as COD\'s own filter parameter', () => {
+  const f = fixture();
+  const result = decode(f.get({ action: 'cod', formula: 'VO2', sg: ' 14 ' }));
+  assert.equal(result.ok, true);
+  assert.equal(result.sg_number, 14);
+  assert.equal(result.query_mode, 'exact_formula+space_group_number');
+  assert.equal(result.source_url, BASE + '/result?format=json&formula=O2%20V&space_group_number=14');
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, result.source_url);
+  /* An unfiltered search must stay unfiltered and say so. */
+  const plain = fixture().search();
+  assert.equal(plain.sg_number, null);
+  assert.equal(plain.query_mode, 'exact_formula');
+  assert.equal(plain.source_url.includes('space_group_number'), false);
+  f.assertIsolated();
+});
+
+test('an unusable space group number is refused rather than sent to be ignored', () => {
+  /* COD answers space_group_number=999 and =abc with the unfiltered search
+     (checked 2026-10-24), so a rejected value here is the only thing that
+     keeps "no filter applied" from reading as "no such phase". */
+  for (const sg of ['0', '231', '999', 'abc', '14.0', '-14', '1e2', '14 15', '0014', 'P21/c', '٣']) {
+    const f = fixture();
+    error(decode(f.get({ action: 'cod', formula: 'VO2', sg })), 'INVALID_SG', false);
+    assert.equal(f.requests.length, 0, sg);
+    assert.equal(f.writes.length, 0);
+    f.assertIsolated();
+  }
+  /* Absent, empty and blank mean "no filter", not a bad request. */
+  for (const sg of [undefined, null, '', '   ']) {
+    const f = fixture();
+    const result = decode(f.get({ action: 'cod', formula: 'VO2', sg }));
+    assert.equal(result.ok, true, String(sg));
+    assert.equal(result.sg_number, null);
+    assert.equal(f.requests[0].url.includes('space_group_number'), false);
+  }
+});
+
+test('a filtered search does not answer from the unfiltered cache entry, or the reverse', () => {
+  const f = fixture();
+  const all = f.search('VO2');
+  assert.equal(all.cached, false);
+  const filtered = decode(f.get({ action: 'cod', formula: 'VO2', sg: '136' }));
+  assert.equal(filtered.cached, false, 'the sg query must not be served the unfiltered answer');
+  assert.equal(f.requests.length, 2);
+  assert.equal(decode(f.get({ action: 'cod', formula: 'VO2', sg: '136' })).cached, true);
+  assert.equal(decode(f.get({ action: 'cod', formula: 'VO2', sg: '14' })).cached, false);
+  assert.equal(f.search('VO2').cached, true);
+  assert.equal(f.requests.length, 3);
+  f.assertIsolated();
+});
+
 test('successful searches cache for six hours and normalized equivalents share a cache entry', () => {
   const f = fixture();
   const first = f.search('VO2');

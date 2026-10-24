@@ -436,10 +436,42 @@
     return out.sort((a, b) => b.length - a.length || (cellOf(a[0]).volume || 0) - (cellOf(b[0]).volume || 0));
   }
 
+  /* ---------- space group number ----------
+
+     The second thing a reader types. It is a filter on records, never on the
+     drawing: a record either carries the requested number or it is not in the
+     answer.
+
+     Three outcomes, because they mean three different things on the page:
+     nothing typed (null) is the whole search, a number is a filter, and
+     anything else (NaN) is a typing mistake that must be shown as such. COD
+     itself does not make that distinction - it answers an out-of-range or
+     unparsable space_group_number with the *unfiltered* search - so a search
+     filtered upstream is filtered here as well. */
+  function sgNumber(text) {
+    if (text == null) return null;
+    const s = String(text).trim();
+    if (!s) return null;
+    if (!/^\d{1,3}$/.test(s)) return NaN;
+    const n = Number(s);
+    return n >= 1 && n <= 230 ? n : NaN;
+  }
+
+  /* Records come from the committed cache as sg_number and from a COD row as
+     sgNumber; a record with neither cannot be shown to carry the requested
+     number, so it is dropped rather than kept on the benefit of the doubt. */
+  function filterBySg(records, n) {
+    if (n == null || !Number.isFinite(n)) return records.slice();
+    return records.filter(r => {
+      const v = Number(r == null ? NaN : (r.sg_number != null ? r.sg_number : r.sgNumber));
+      return Number.isFinite(v) && v === n;
+    });
+  }
+
   return {
     parseCif, cellVectors, reciprocalVectors, metricTensor, cellFromVectors,
     symopMatrix, expandAtoms, reflections, matchLattice, applyMatrix, groupPhases,
-    structureProblem,
+    structureProblem, sgNumber, filterBySg,
     volume, norm, dot, cross, Z
   };
 });

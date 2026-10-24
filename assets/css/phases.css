@@ -70,3 +70,22 @@
 .pv-legend { margin-top:16px; display:flex; flex-direction:column; gap:8px; }
 .pv-legend p { font-size:12.5px; line-height:1.7; color:var(--fg-3); margin:0; }
 .pv-legend b { color:var(--fg-2); }
+
+/* The lab-code gate. Same shared code as XRD Studio; assets/js/phase-gate.js
+   says what it is and is not for. The page's heading and lede stay visible
+   behind it, so a reader can see what the code opens before asking for one. */
+.pv-gate { max-width:470px; margin:26px 0 10px; padding:22px; background:var(--glass); border:1px solid var(--line); border-radius:var(--radius); }
+.pv-gate label { display:block; font-size:13px; color:var(--fg-2); margin-bottom:8px; }
+.pv-gate-row { display:flex; gap:10px; }
+.pv-gate-row input { flex:1; min-width:0; background:var(--glass-2); border:1px solid var(--line); color:var(--fg); border-radius:12px; padding:11px 14px; font:inherit; font-size:15px; }
+.pv-gate-row input:focus { outline:none; border-color:var(--violet-2); }
+.pv-gate-row button { background:var(--fg); color:#07070b; border:0; border-radius:12px; padding:11px 18px; font:inherit; font-weight:600; cursor:pointer; }
+.pv-gate-row button[disabled], .pv-gate-row input[disabled] { opacity:.45; cursor:not-allowed; }
+.pv-gate-status { min-height:20px; margin:12px 0 0; font-size:13px; color:var(--fg-2); }
+.pv-gate-status.warn { color:var(--orange); }
+.pv-gate-note { margin:12px 0 0; font-size:12px; line-height:1.65; color:var(--fg-3); }
+.pv-gate-note a { color:var(--violet-2); }
+/* The space group number is the optional second input, and is narrower than
+   the composition so the form reads as one required and one optional field. */
+.pv-form input.pv-sg-input { width:168px; }
+@media (max-width:560px) { .pv-gate-row { flex-direction:column; } .pv-form input.pv-sg-input { width:100%; } }

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Crystal Phase Viewer — YeongUk Choi</title>
 <meta name="theme-color" content="#050507">
+<meta name="robots" content="noindex, nofollow">
 <meta name="description" content="Type a composition, pick phases from the Crystallography Open Database, and draw their unit cells and reciprocal lattices side by side or in one frame.">
 <link rel="canonical" href="https://yeonguk-choi.github.io/phases.html">
 <meta property="og:type" content="website">
@@ -21,6 +22,7 @@
 <script src="data/phases.js"></script>
 <script src="assets/js/phase-core.js"></script>
 <script src="assets/js/phases.js"></script>
+<script src="assets/js/phase-gate.js"></script>
 </head>
 <body data-page="phases">
 <div class="bg-glow"></div><div class="bg-noise"></div>
@@ -33,10 +35,25 @@
 
 <div class="eyebrow">Crystal Phase Viewer</div>
 <h1 class="page">조성을 넣으면, 그 물질의 상들을 그립니다.</h1>
-<p class="lede">조성을 입력하면 <a href="https://www.crystallography.net/cod/" target="_blank" rel="noreferrer">Crystallography Open Database</a>에 등록된 구조들을 상(phase)별로 묶어 보여 줍니다. 보고 싶은 것을 체크하면 단위격자와 역격자를 그립니다. 계정도, 설치도 필요 없습니다.</p>
+<p class="lede">조성을 입력하면 <a href="https://www.crystallography.net/cod/" target="_blank" rel="noreferrer">Crystallography Open Database</a>에 등록된 구조들을 상(phase)별로 묶어 보여 줍니다. 보고 싶은 것을 체크하면 단위격자와 역격자를 그립니다. 공간군 번호를 같이 넣으면 그 번호만 추립니다. 설치할 것은 없고, 연구실 공용 코드 하나면 됩니다.</p>
 
+<section id="pv-gate" class="pv-gate" hidden>
+  <form id="pv-gate-form" class="pv-gate-form" autocomplete="off">
+    <label for="pv-code">연구실 공용 코드</label>
+    <div class="pv-gate-row">
+      <input id="pv-code" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required aria-describedby="pv-gate-status">
+      <button type="submit" id="pv-gate-go">열기</button>
+    </div>
+  </form>
+  <p id="pv-gate-status" class="pv-gate-status" role="status" aria-live="polite"></p>
+  <p class="pv-gate-note">XRD Studio와 같은 코드입니다. 코드가 없으시면 <a href="mailto:aowlr8945@gmail.com?subject=Crystal%20Phase%20Viewer%20lab%20code">최영욱에게 요청</a>해 주십시오. 구조 데이터는 COD의 공개 자료이고, 코드는 이 페이지가 쓰는 연구실 서버의 몫을 지키기 위한 것입니다.</p>
+  <noscript><p class="pv-gate-note">JavaScript를 켜 주십시오.</p></noscript>
+</section>
+
+<div id="pv-app" hidden>
 <form id="pv-form" class="pv-form" autocomplete="off">
   <input id="pv-input" type="text" placeholder="VO2" aria-label="조성" spellcheck="false">
+  <input id="pv-sg" type="text" class="pv-sg-input" placeholder="공간군 번호 (선택)" aria-label="공간군 번호 (1–230, 선택)" inputmode="numeric" spellcheck="false">
   <button type="submit">상 찾기</button>
   <span class="pv-have-label">지금 받아 둔 조성: <span id="pv-have"></span></span>
 </form>
@@ -64,6 +81,7 @@
       <button type="button" id="pv-reset" class="pv-btn">방향 초기화</button>
       <button type="button" id="pv-svg" class="pv-btn">SVG 저장</button>
       <button type="button" id="pv-png" class="pv-btn">PNG 저장</button>
+      <button type="button" id="pv-lock" class="pv-btn">이용 종료</button>
     </div>
     <div id="pv-figure" class="pv-figure"></div>
     <div class="pv-legend">
@@ -74,6 +92,7 @@
       <p class="pv-caveat">구조 데이터 출처: Crystallography Open Database (공개 자료). 각 후보의 COD 번호를 눌러 원 논문을 확인하십시오.</p>
     </div>
   </section>
+</div>
 </div>
 
 </div></main>

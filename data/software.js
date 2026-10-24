@@ -56,6 +56,32 @@ window.SITE.software = {
       links: [{label: "Open in browser", href: "xrd-studio.html", primary: true, page: true}]
     },
     {
+      name: "Crystal Phase Viewer",
+      tagline: "Type a composition \u2014 and a space group number if you want one phase \u2014 and draw the structures the Crystallography Open Database has for it.",
+      kind: "web",
+      sub: "Runs in your browser \u00b7 unit cells and reciprocal lattices",
+      status: "released",
+      version: "1.0", date: "2026-10-24", license: "",
+      image: "assets/img/software/phase-viewer.jpg",
+      imageAlt: "Crystal Phase Viewer: VO\u2082 grouped into seven candidates, three of them drawn side by side " +
+                "as reciprocal lattices \u2014 rutile P4\u2082/mnm, monoclinic P2\u2081/c and P2/m",
+      imageNote: "VO\u2082 as COD holds it: eleven records, grouped by lattice, three drawn together.",
+      features: [
+        "Groups COD records by lattice: one record is one publication, not one phase",
+        "Space group number as a second input \u2014 the filter is applied to the records that come back, not only asked for",
+        "Unit cell and reciprocal lattice, side by side for up to ten phases or overlaid for three",
+        "Overlays search for the integer lattice relation themselves and print the transformation and the misfit",
+        "A plane section (hk0, h0l, 0kl) read face on, the way a reciprocal space map is read",
+        "PNG and SVG export, on a dark screen or a white page"
+      ],
+      needs: "A current browser and the shared lab code \u00b7 Korean interface",
+      caveat: "Spot size is a structure factor from atomic numbers only \u2014 not a diffracted intensity: " +
+              "no angle-dependent scattering factors, thermal motion, polarisation or absorption. " +
+              "A matching lattice metric is evidence that two records are the same phase, not proof, and an " +
+              "overlay proposes a geometric relation rather than deriving a group\u2013subgroup one.",
+      links: [{label: "Open in browser", href: "phases.html", primary: true}]
+    },
+    {
       name: "Rietveld Auto",
       tagline: "A Rietveld refinement engine built to be driven \u2014 by you, or by an AI agent reading its diagnostics.",
       kind: "script",

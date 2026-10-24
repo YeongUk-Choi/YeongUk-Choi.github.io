@@ -143,6 +143,7 @@ try {
     ["/assets/js/site.js", "text/javascript"], ["/assets/css/site.css", "text/css"],
     ["/data/profile.js", "text/javascript"], ["/data/software.js", "text/javascript"],
     ["/assets/img/software/xrd-studio.jpg", "image/jpeg"], ["/assets/img/software/rietveld-auto.jpg", "image/jpeg"],
+    ["/assets/img/software/phase-viewer.jpg", "image/jpeg"],
     ["/assets/img/software/rietveld-auto-icon.svg", "image/svg+xml"], ["/assets/img/qr-site.svg", "image/svg+xml"],
   ]);
   let origin;
@@ -307,7 +308,11 @@ try {
 
   fixture.enabled = false;
   await navigate("/software.html");
-  await waitFor(`document.querySelectorAll(".sw-card").length === 2`, "software cards");
+  /* The page is rendered from data/software.js, so this waits for the whole
+     list rather than for a fixed number of cards: the checks below are about
+     XRD Studio's launch controls, not about how many programs are listed. */
+  await waitFor(`document.querySelectorAll(".sw-card").length === (window.SITE?.software?.items || []).length
+    && document.querySelectorAll(".sw-card").length > 0`, "software cards");
   assert.equal(await evaluate(`document.querySelectorAll('a[href="xrd-studio.html"]').length`), 0);
   assert.equal(await evaluate(`!!document.querySelector('img[src="assets/img/software/xrd-studio-icon.svg"]').closest("a")`), false);
   record("Disabled configuration hides Software icon launch and page launch button");

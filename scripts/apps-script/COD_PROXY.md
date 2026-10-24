@@ -11,13 +11,14 @@ Construct parameters with `URLSearchParams` and use an ordinary GET without
 custom headers. Follow the Google Content Service redirect. Requests go to the
 existing `/exec` URL only after the new backend has been deployed.
 
-### Search: `?action=cod&formula=VO2`
+### Search: `?action=cod&formula=VO2` (optional `&sg=14`)
 
 ```json
 {
   "ok": true,
   "status": "ok",
   "formula": "O2 V",
+  "sg_number": null,
   "query_mode": "exact_formula",
   "count": 11,
   "records": [],
@@ -41,6 +42,22 @@ alphabetically when carbon is present; otherwise alphabetical). Examples:
 Parentheses, charges, hydrate separators and variable occupancies are explicitly
 rejected. Element counts must be positive and no larger than 10000, with at most
 120 input characters and 40 tokens.
+
+`sg` is an optional space group number. It must be 1-230 written in plain
+digits; anything else is `INVALID_SG` and nothing is fetched. A valid number is
+passed to COD as its own `space_group_number` filter, `sg_number` repeats it,
+and `query_mode` becomes `exact_formula+space_group_number`. A filtered and an
+unfiltered search are separate cache entries.
+
+**COD ignores a parameter it does not accept, including an out-of-range value.**
+Checked 2026-10-24 against COD: `formula=O2 V` returns 11 records,
+`&space_group_number=14` returns 2, and `&space_group_number=999`,
+`&space_group_number=abc` and the misspelled `&sgnumber=14` each return the
+unfiltered 11. One spelling, `&spacegroup=14`, returns 0. An upstream filter
+that is dropped therefore looks exactly like a search that was never narrowed,
+so the client must filter the returned rows by `sgNumber` as well; the viewer
+does (`PhaseCore.filterBySg`). Do not infer a phase's absence from an upstream
+filter alone.
 
 Counts are **not reduced to an empirical ratio**. `V2O4` and `VO2` make different
 queries. The endpoint searches COD's exact formula field; it does not establish
@@ -66,7 +83,7 @@ Failures from either endpoint return JSON:
 Inspect the body, not only HTTP `response.ok`: Content Service does not set an
 application-specific HTTP status here. For CIF, check the returned content type
 for JSON and parse errors before treating text as a CIF. Error codes are
-`INVALID_FORMULA`, `INVALID_ID`, `METHOD_NOT_ALLOWED`, `UPSTREAM_NETWORK`,
+`INVALID_FORMULA`, `INVALID_SG`, `INVALID_ID`, `METHOD_NOT_ALLOWED`, `UPSTREAM_NETWORK`,
 `UPSTREAM_HTTP`, `UPSTREAM_INVALID`, `UPSTREAM_TOO_LARGE`, `TOO_MANY_RESULTS`,
 and `PROXY_ERROR`. HTTP failures also include `upstream_status`. Form and JSON
 POST requests for either action are rejected without incrementing lab counters.
@@ -122,10 +139,20 @@ distinguish no matches, upstream failure, and a record that cannot be rendered.
    app, retaining the existing spreadsheet, access settings and `/exec` URL.
    Authorize URL Fetch's external-request scope if prompted.
 3. Only after confirming that version is deployed, test `VO2`, a valid unmatched
-   formula, one known CIF, and an invalid ID from the intended HTTPS site.
-   Confirm Google redirect/CORS behavior and unchanged inventory/telemetry flows.
-4. Enable live search in the phase viewer after those checks and the agreed
-   publication decision. This branch does not enable the frontend or deploy it.
+   formula, `VO2` with `&sg=14` and with `&sg=999`, one known CIF, and an invalid
+   ID from the intended HTTPS site. Confirm Google redirect/CORS behavior and
+   unchanged inventory/telemetry flows.
+4. Enable live search in the phase viewer after those checks: `live: true` in
+   `data/phases.js`, whose `relayUrl` must already hold this deployment's
+   `/exec` address. The lab-code gate (`gate: true`) uses the same address but
+   the already-deployed `xrdcheck` route, so it does not wait on this step.
+
+Local page regression test, including the gate, the space group filter, and an
+upstream that stops honouring the filter:
+
+```sh
+node scripts/test_phase_page.mjs
+```
 
 Local backend regression tests:
 
@@ -140,7 +167,9 @@ authorization, CORS, timeout enforcement or production deployment.
 ## References checked 2026-10-24
 
 - [COD REST API](https://wiki.crystallography.net/RESTful_API/): `formula` uses Hill
-  notation; JSON search and direct CIF retrieval are supported.
+  notation; JSON search and direct CIF retrieval are supported. The filter
+  parameter name and COD's silence on unknown parameters were checked against
+  the live service rather than taken from the page.
 - [Google Cache](https://developers.google.com/apps-script/reference/cache/cache):
   100 KB per entry, maximum six-hour expiry, possible earlier eviction.
 - [Google CacheService](https://developers.google.com/apps-script/reference/cache/cache-service):

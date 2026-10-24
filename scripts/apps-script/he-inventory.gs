@@ -524,7 +524,8 @@ function json(o) {
 
 /* ---- COD read-only proxy ----
    Contract/deployment: scripts/apps-script/COD_PROXY.md. These routes run before
-   inventory authentication and never access sheets or lab-code counters. */
+   inventory authentication and never access sheets or lab-code counters.
+   `cod` takes a formula and an optional space group number; `cif` takes an ID. */
 var COD_BASE = 'https://www.crystallography.net/cod';
 var COD_ELEMENTS = ('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn ' +
   'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu ' +
@@ -574,6 +575,25 @@ function codFormula(input) {
   return elements.map(function (el) { var n = counts[el] / 1000000; return el + (n === 1 ? '' : String(n)); }).join(' ');
 }
 
+/* Optional space group number, 1-230. COD applies `space_group_number` as a
+   filter, but it ignores a parameter it does not understand and an
+   out-of-range value: `space_group_number=999` and `=abc` both return the
+   unfiltered search (checked against COD 2026-10-24). An ignored filter that
+   looked applied would be read as "this phase is not in COD", so the number is
+   validated here and the client filters the returned rows again. */
+function codSgNumber(input) {
+  if (input == null || String(input).trim() === '') return null;
+  var text = String(input).trim();
+  if (!/^\d{1,3}$/.test(text)) {
+    throw codFault('INVALID_SG', 'Enter a space group number from 1 to 230, or leave it blank.', false);
+  }
+  var n = Number(text);
+  if (!(n >= 1 && n <= 230)) {
+    throw codFault('INVALID_SG', 'Enter a space group number from 1 to 230, or leave it blank.', false);
+  }
+  return n;
+}
+
 function codCacheGet(key) {
   try {
     /* Keep bulk COD data out of ScriptCache: inventory/push lockouts use that
@@ -616,13 +636,17 @@ function handleCodProxy(p) {
   try {
     if (p.action === 'cod') {
       var formula = codFormula(p.formula);
-      var key = 'cod-v1:search:' + formula;
+      var sg = codSgNumber(p.sg);
+      /* A filtered and an unfiltered search are different answers to different
+         questions, so they are different cache entries. */
+      var key = 'cod-v1:search:' + formula + (sg ? '|sg' + sg : '');
       var hit = codCacheGet(key);
-      if (hit && hit.ok === true && hit.formula === formula && Array.isArray(hit.records)) {
+      if (hit && hit.ok === true && hit.formula === formula && (hit.sg_number || null) === sg && Array.isArray(hit.records)) {
         hit.cached = true;
         return json(hit);
       }
-      var url = COD_BASE + '/result?format=json&formula=' + encodeURIComponent(formula);
+      var url = COD_BASE + '/result?format=json&formula=' + encodeURIComponent(formula) +
+        (sg ? '&space_group_number=' + sg : '');
       var raw = codFetch(url, 1024 * 1024), records;
       try { records = JSON.parse(raw); } catch (err) {
         throw codFault('UPSTREAM_INVALID', 'COD returned invalid or incomplete JSON. Try again later.', true);
@@ -634,7 +658,8 @@ function handleCodProxy(p) {
       }
       if (records.length > 500) throw codFault('TOO_MANY_RESULTS', 'COD returned more than 500 records. No records were silently truncated.', false);
       var result = { ok: true, status: records.length ? 'ok' : 'empty', formula: formula,
-        query_mode: 'exact_formula', count: records.length, records: records,
+        sg_number: sg, query_mode: sg ? 'exact_formula+space_group_number' : 'exact_formula',
+        count: records.length, records: records,
         fetched_at: new Date().toISOString(), cached: false, source_url: url };
       codCachePut(key, result, records.length ? 21600 : 300);
       return json(result);

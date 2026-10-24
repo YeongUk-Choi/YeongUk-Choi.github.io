@@ -167,5 +167,32 @@ console.log("unreadable records are reported, not half-drawn");
     P.structureProblem({ cell: { a: 5, b: 5, c: 5, alpha: 170, beta: 170, gamma: 170 }, atoms: [{ element: "V", x: 0, y: 0, z: 0 }] }) !== null);
 }
 
+console.log("the space group number is a filter, and a mistyped one is not a filter");
+{
+  /* Three outcomes, because the page has to say three different things: no
+     filter, a filter, and a typing mistake. COD itself collapses the third
+     into the first - space_group_number=999 and =abc both come back as the
+     unfiltered search (checked against COD 2026-10-24) - so a number that is
+     not a space group number has to be refused before it is sent, and the
+     rows that come back have to be filtered again here. */
+  ok("blank means the whole composition", P.sgNumber("") === null && P.sgNumber(null) === null && P.sgNumber("  ") === null);
+  ok("a number is read, surrounding spaces and all", P.sgNumber(" 14 ") === 14 && P.sgNumber("1") === 1 && P.sgNumber("230") === 230);
+  ok("0 and 231 are not space groups", Number.isNaN(P.sgNumber("0")) && Number.isNaN(P.sgNumber("231")));
+  ok("a symbol, a decimal or an expression is a mistake, not a filter",
+    ["P21/c", "14.0", "-14", "1e2", "14 15", "０１４"].every(v => Number.isNaN(P.sgNumber(v))));
+
+  const rows = [{ sg_number: 14 }, { sgNumber: "14" }, { sg_number: 12 }, { sg_number: null }, {}];
+  ok("filtering keeps both field spellings and drops the rest", P.filterBySg(rows, 14).length === 2);
+  ok("a record with no space group is dropped, not kept on trust", P.filterBySg(rows, 14).every(r => r.sg_number === 14 || r.sgNumber === "14"));
+  ok("no filter returns everything, as a copy", P.filterBySg(rows, null).length === rows.length && P.filterBySg(rows, null) !== rows);
+  ok("a NaN filter cannot silently empty the list", P.filterBySg(rows, NaN).length === rows.length);
+  /* The committed VO2 cache is the real thing: 11 records, two of them P2_1/c. */
+  const m1 = P.filterBySg(cache.entries, 14);
+  ok("VO2 filtered to 14 gives the two P2_1/c records (COD writes them P 1 21/c 1)",
+    m1.length === 2 && m1.every(e => /^P\s*1\s*21\/c\s*1$/.test(e.spacegroup)),
+    m1.map(e => `${e.cod_id} ${e.spacegroup}`).join(" | "));
+  ok("VO2 filtered to a space group it does not have is empty, not everything", P.filterBySg(cache.entries, 1).length === 0);
+}
+
 console.log(fails ? `\n${fails} check(s) failed` : "\nall checks passed");
 process.exit(fails ? 1 : 0);

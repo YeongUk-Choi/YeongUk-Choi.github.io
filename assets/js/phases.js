@@ -51,7 +51,7 @@
   const MAX_PANELS = 10, MAX_OVERLAY = 3;
 
   const state = {
-    formula: "", data: null, groups: [], pick: {}, chosen: [],
+    formula: "", sg: null, data: null, groups: [], pick: {}, chosen: [],
     view: "reciprocal", mode: "panels", paper: false, section: "",
     yaw: -0.62, pitch: -0.42, qmax: 0.55, topN: 24, ref: 0
   };
@@ -96,8 +96,9 @@
      nothing to group or draw, so they are dropped and counted out loud. */
   const hasCell = e => [e.a, e.b, e.c, e.alpha, e.beta, e.gamma].every(v => v != null && v > 0);
 
-  async function relaySearch(name) {
-    const r = await fetch(`${relay()}?action=cod&formula=${encodeURIComponent(name)}`, { cache: "no-store" });
+  async function relaySearch(name, sg) {
+    const q = `action=cod&formula=${encodeURIComponent(name)}` + (sg == null ? "" : `&sg=${sg}`);
+    const r = await fetch(`${relay()}?${q}`, { cache: "no-store" });
     if (!r.ok) throw new Error(`중계 서버가 HTTP ${r.status}을 돌려주었습니다`);
     const j = await r.json();
     if (!j || j.ok !== true) throw new Error((j && j.error) || "중계 서버가 오류를 돌려주었습니다");
@@ -108,11 +109,23 @@
       entries: usable };
   }
 
-  async function loadFormula(text) {
+  /* The two inputs are a composition and, optionally, a space group number.
+     The number is only ever a filter on records; it never changes what is
+     drawn. The relay passes it to COD so a large search can be narrowed
+     upstream, and it is applied again here, because COD answers an
+     out-of-range or unparsable space_group_number with the unfiltered search
+     rather than with an error. Filtering only upstream would therefore show
+     every phase under a heading that says one. */
+  async function loadFormula(text, sgText) {
     const name = String(text || "").trim().replace(/\s+/g, "");
     if (!name) return;
-    state.formula = name;
-    status("COD 캐시를 읽는 중…");
+    const sg = C.sgNumber(sgText);
+    if (Number.isNaN(sg)) {
+      status("공간군 번호는 1부터 230까지의 정수입니다. 비워 두면 그 조성의 전부를 찾습니다.", true);
+      return;                              /* the figure on screen is left alone */
+    }
+    state.formula = name; state.sg = sg;
+    status(sg == null ? "COD 캐시를 읽는 중…" : `COD 캐시를 읽는 중… (공간군 ${sg}번)`);
     let live = false;
     try {
       const r = await fetch(`data/phases/${encodeURIComponent(name)}.json`, { cache: "no-store" });
@@ -121,8 +134,8 @@
     } catch (e) {
       state.data = null;
       if (relay()) {
-        status(`받아 둔 조성이 아니어서 COD에 직접 물어보는 중… (‘${name}’)`);
-        try { state.data = await relaySearch(name); live = true; }
+        status(`받아 둔 조성이 아니어서 COD에 직접 물어보는 중… (‘${name}’${sg == null ? "" : `, 공간군 ${sg}번`})`);
+        try { state.data = await relaySearch(name, sg); live = true; }
         catch (err) { state.data = null; status(`COD 검색이 되지 않았습니다 — ${err.message}`, true); }
       }
       if (!state.data) {
@@ -137,7 +150,9 @@
     }
     /* One COD record is one publication, not one phase. Group first, then let
        the reader choose which record of a phase to draw. */
-    const recs = state.data.entries.map(e => Object.assign({ id: String(e.cod_id), sgNumber: e.sg_number, cell: e }, e));
+    const all = state.data.entries;
+    const kept = C.filterBySg(all, sg);
+    const recs = kept.map(e => Object.assign({ id: String(e.cod_id), sgNumber: e.sg_number, cell: e }, e));
     state.groups = C.groupPhases(recs);
     state.pick = {}; state.chosen = []; state.ref = 0;
     state.groups.forEach((g, i) => { state.pick[i] = 0; });
@@ -148,7 +163,26 @@
       ? `COD 즉석 검색${state.data.cached ? " (중계 캐시)" : ""}`
       : `받아 둔 날짜 ${state.data.fetched}`;
     const dropped = state.data.dropped ? `, 격자가 없어 뺀 레코드 ${state.data.dropped}건` : "";
-    status(`COD 레코드 ${recs.length}건 → 유사 격자 후보 ${state.groups.length}개 (${where}${dropped})`);
+    /* Where the filter was applied decides what the count can honestly say.
+       The committed cache holds the whole composition, so it can report "N of
+       M"; a relayed search was already narrowed at COD, so the records that
+       did not match were never sent and cannot be counted here. */
+    const upstream = live && sg != null;
+    /* An empty result of a filter is a finding, not a failure: it says the
+       database has this composition but not under that number. */
+    if (sg != null && !recs.length) {
+      const seen = Array.from(new Set(all.map(e => e.sg_number).filter(v => v != null))).sort((x, y) => x - y);
+      status(upstream
+        ? `‘${name}’에 공간군 ${sg}번으로 등록된 COD 레코드가 없습니다 (${where})`
+        : `‘${name}’ 레코드 ${all.length}건 중 공간군 ${sg}번은 없습니다`
+          + (seen.length ? ` — 이 조성에 있는 번호: ${seen.join(", ")} (${where})` : ` (${where})`), true);
+      render();
+      return;
+    }
+    const picked = sg == null ? `COD 레코드 ${recs.length}건`
+      : upstream ? `공간군 ${sg}번 COD 레코드 ${recs.length}건`
+      : `COD 레코드 ${all.length}건 중 공간군 ${sg}번 ${recs.length}건`;
+    status(`${picked} → 유사 격자 후보 ${state.groups.length}개 (${where}${dropped})`);
     render();
   }
 
@@ -653,7 +687,9 @@
     };
   }
 
-  const baseName = () => `${state.formula || "phases"}-${state.view}${sectionOn() ? "-" + state.section : ""}`;
+  /* The file name carries the query, filter included: two exports of the same
+     composition under different space group numbers are different figures. */
+  const baseName = () => `${state.formula || "phases"}${state.sg ? "-sg" + state.sg : ""}-${state.view}${sectionOn() ? "-" + state.section : ""}`;
 
   function save(blob, ext) {
     const a = document.createElement("a");
@@ -693,7 +729,10 @@
   }
 
   function wire() {
-    $("#pv-form").addEventListener("submit", e => { e.preventDefault(); loadFormula($("#pv-input").value); });
+    $("#pv-form").addEventListener("submit", e => {
+      e.preventDefault();
+      loadFormula($("#pv-input").value, $("#pv-sg").value);
+    });
     document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {
       state.view = b.dataset.view;
       document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
@@ -734,7 +773,14 @@
     });
   }
 
-  document.addEventListener("DOMContentLoaded", async () => {
+  /* The page starts the viewer, not the parser. With the lab-code gate on
+     (data/phases.js), nothing is fetched until the code has been accepted -
+     not the local index, and in particular not COD through the relay, whose
+     quota belongs to the lab's helium log as well. */
+  let running = false;
+  async function start() {
+    if (running) return;
+    running = true;
     wire();
     try {
       const r = await fetch("data/phases/index.json", { cache: "no-store" });
@@ -742,7 +788,18 @@
     } catch (e) { window.PHASE_INDEX = []; }
     const hint = $("#pv-have");
     hint.textContent = (window.PHASE_INDEX || []).map(x => x.formula).join(" · ");
-    const start = new URLSearchParams(location.search).get("f") || (window.PHASE_INDEX[0] || {}).formula;
-    if (start) { $("#pv-input").value = start; loadFormula(start); }
+    const q = new URLSearchParams(location.search);
+    const first = q.get("f") || (window.PHASE_INDEX[0] || {}).formula;
+    const sg = q.get("sg") || "";
+    if (first) {
+      $("#pv-input").value = first;
+      $("#pv-sg").value = sg;
+      loadFormula(first, sg);
+    }
+  }
+  window.PhaseViewer = { start };
+
+  document.addEventListener("DOMContentLoaded", () => {
+    if (!((window.SITE && window.SITE.phases) || {}).gate) start();
   });
 })();
