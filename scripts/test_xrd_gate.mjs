@@ -2,7 +2,10 @@
 // Integration check using Node's built-in WebSocket and a private headless Chrome.
 // No production authentication requests: local config, an allowlist server, and
 // CDP interception prohibit requests outside this test's loopback origin.
-// Usage: node scripts/test_xrd_gate.mjs --xrd-root ../xrd-studio-gpt [--chrome PATH]
+// Usage: node scripts/test_xrd_gate.mjs [--xrd-root ../xrd-studio] [--chrome PATH]
+// --xrd-root must be the XRD Studio source itself, not a working branch checkout of it:
+// a stale sibling as the default made this check report a bundle mismatch that was only
+// the branch being behind (2026-10-24).
 import assert from "node:assert/strict";
 import {spawn, execFileSync} from "node:child_process";
 import {createHash} from "node:crypto";
@@ -24,7 +27,7 @@ for (let i = 0; i < options.length; i += 2) {
   assert(["--xrd-root", "--chrome", "--output", "--analysis-fixtures", "--intensity-fixture"].includes(options[i]), `Unknown argument ${options[i]}`);
   assert(options[i + 1], `Missing value for ${options[i]}`);
 }
-const xrdRoot = path.resolve(option("--xrd-root", path.join(siteRoot, "../xrd-studio-gpt")));
+const xrdRoot = path.resolve(option("--xrd-root", path.join(siteRoot, "../xrd-studio")));
 const analysisFixtures = option("--analysis-fixtures", null);
 const intensityFixture = option("--intensity-fixture", null);
 const chromePath = option("--chrome", process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
