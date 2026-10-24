@@ -142,6 +142,23 @@
     };
   }
 
+  /* Everything the viewer needs before it can draw. parseCif reports what it
+     could not follow as a missing field rather than throwing, so without this
+     check an unreadable CIF turns into NaN geometry and the phase vanishes
+     from the figure instead of being reported as unreadable. Returns null when
+     the structure is usable, otherwise the reason it is not. */
+  function structureProblem(p) {
+    if (!p) return "CIF를 읽지 못했습니다";
+    const c = p.cell || {};
+    if (![c.a, c.b, c.c].every(v => Number.isFinite(v) && v > 0)) return "격자 상수(a, b, c)를 읽지 못했습니다";
+    if (![c.alpha, c.beta, c.gamma].every(v => Number.isFinite(v) && v > 0 && v < 180)) return "격자 각(α, β, γ)을 읽지 못했습니다";
+    if (!(volume(cellVectors(c)) > 0)) return "세 각이 격자를 이루지 못합니다 (부피 0)";
+    if (!Array.isArray(p.atoms) || !p.atoms.length) return "원자 자리(_atom_site_fract_*)를 읽지 못했습니다";
+    if (!p.atoms.every(a => Number.isFinite(a.x) && Number.isFinite(a.y) && Number.isFinite(a.z))) return "원자 좌표에 읽을 수 없는 값이 있습니다";
+    if (!p.atoms.some(a => Z[a.element])) return "원소 기호를 알아보지 못했습니다";
+    return null;
+  }
+
   /* ---------- lattice ---------- */
 
   function cellVectors(cell) {
@@ -370,11 +387,27 @@
     const o = Object.assign({ lengthTol: 0.015, angleTol: 1.5 }, opts || {});
     const cellOf = r => r.cell || r;
     const sgOf = r => r.sgNumber ?? r.sg_number ?? r.spaceGroupNumber ?? 0;
-    const sorted = r => { const c = cellOf(r); return [c.a, c.b, c.c].sort((x, y) => x - y); };
-    const angles = r => { const c = cellOf(r); return [c.alpha ?? 90, c.beta ?? 90, c.gamma ?? 90].sort((x, y) => x - y); };
-    const alike = (p, q) => sgOf(p) === sgOf(q)
-      && sorted(p).every((v, i) => Math.abs(v / sorted(q)[i] - 1) <= o.lengthTol)
-      && angles(p).every((v, i) => Math.abs(v - angles(q)[i]) <= o.angleTol);
+    const lens = r => { const c = cellOf(r); return [c.a, c.b, c.c]; };
+    const angs = r => { const c = cellOf(r); return [c.alpha ?? 90, c.beta ?? 90, c.gamma ?? 90]; };
+
+    /* Two reports of one phase may name the axes differently, so the comparison
+       has to allow a relabelling - but the *same* relabelling for lengths and
+       angles. alpha is the angle between b and c, so moving a length moves its
+       opposite angle with it: under axis permutation p, new angle i is old
+       angle p[i], exactly as new length i is old length p[i].
+
+       Sorting the three lengths and the three angles into two independent
+       ascending lists loses that pairing. Two triclinic cells holding the same
+       six numbers in incompatible arrangements are different lattices, and the
+       independent sort would have filed them as one phase. */
+    const PERMS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    const alike = (p, q) => {
+      if (sgOf(p) !== sgOf(q)) return false;
+      const lp = lens(p), ap = angs(p), lq = lens(q), aq = angs(q);
+      if (!lp.concat(lq).every(v => Number.isFinite(v) && v > 0)) return false;
+      return PERMS.some(pm => pm.every((s, i) =>
+        Math.abs(lp[s] / lq[i] - 1) <= o.lengthTol && Math.abs(ap[s] - aq[i]) <= o.angleTol));
+    };
 
     const group = records.map(() => -1);
     let n = 0;
@@ -393,13 +426,20 @@
     }
     const out = Array.from({ length: n }, () => []);
     records.forEach((r, i) => out[group[i]].push(r));
-    /* Largest, then smallest volume first: the well-documented phases lead. */
+    /* What comes back is a group of records whose lattices agree to the given
+       tolerance - a similar-lattice candidate, not a proven single phase.
+       Grouping is single-linkage, so a chain of near misses can walk a group
+       wider than the tolerance, and two genuinely distinct phases can share a
+       metric. The caller must present these as candidates.
+
+       Largest, then smallest volume first: the well-documented phases lead. */
     return out.sort((a, b) => b.length - a.length || (cellOf(a[0]).volume || 0) - (cellOf(b[0]).volume || 0));
   }
 
   return {
     parseCif, cellVectors, reciprocalVectors, metricTensor, cellFromVectors,
     symopMatrix, expandAtoms, reflections, matchLattice, applyMatrix, groupPhases,
+    structureProblem,
     volume, norm, dot, cross, Z
   };
 });

@@ -30,6 +30,11 @@
 .pv-multi, .pv-link { font-size:11px; color:var(--fg-3); }
 .pv-link { text-decoration:none; }
 .pv-link:hover { color:var(--fg-2); }
+/* A record the CIF reader could not follow: named in place, checkbox off, and
+   kept out of every figure rather than half-drawn. */
+.pv-row.bad { opacity:.62; }
+.pv-row.bad .pv-sg { text-decoration:line-through; text-decoration-color:var(--fg-3); }
+.pv-bad { grid-column:2; font-size:11px; line-height:1.5; color:#e58a7a; }
 .pv-note { font-size:12px; line-height:1.6; color:var(--fg-3); margin:14px 2px 0; }
 
 .pv-main { min-width:0; }
@@ -39,6 +44,10 @@
 .pv-seg button.on { background:var(--glass-2); color:var(--fg); }
 .pv-btn { background:var(--glass); border:1px solid var(--line); border-radius:12px; }
 .pv-btn.on { color:#07070b; background:var(--fg); }
+.pv-btn[disabled], .pv-select[disabled] { opacity:.4; cursor:not-allowed; }
+.pv-field { display:flex; align-items:center; gap:7px; background:var(--glass); border:1px solid var(--line); border-radius:12px; padding:0 10px 0 12px; font-size:13px; color:var(--fg-3); }
+.pv-select { background:none; border:0; color:var(--fg-2); font:inherit; font-size:13px; padding:8px 2px; cursor:pointer; }
+.pv-select option { background:#13131a; color:#e9e9f0; }
 
 .pv-figure { background:var(--glass); border:1px solid var(--line); border-radius:var(--radius); padding:14px; min-height:360px; touch-action:none; cursor:grab; }
 .pv-figure.paper { background:#fff; }
@@ -50,6 +59,14 @@
 .pv-relation p { font-size:12.5px; line-height:1.6; color:var(--fg-2); margin:0; }
 .pv-relation code { font-family:var(--mono); font-size:11.5px; color:var(--fg); background:var(--glass-2); padding:1px 6px; border-radius:6px; }
 .pv-caveat { color:var(--fg-3); }
+/* The relation lines live inside the figure box, so they follow the figure's
+   background rather than the page's. On paper they were page-grey on white. */
+.pv-figure.paper .pv-relation p { color:#23232b; }
+.pv-figure.paper .pv-relation .pv-caveat { color:#5b5b66; }
+.pv-figure.paper .pv-relation code { color:#15151b; background:rgba(0,0,0,.06); }
+.pv-figure.paper .pv-empty { color:#5b5b66; }
+/* A section is drawn face on; there is nothing to drag. */
+.pv-figure.flat { cursor:default; }
 .pv-legend { margin-top:16px; display:flex; flex-direction:column; gap:8px; }
 .pv-legend p { font-size:12.5px; line-height:1.7; color:var(--fg-3); margin:0; }
 .pv-legend b { color:var(--fg-2); }

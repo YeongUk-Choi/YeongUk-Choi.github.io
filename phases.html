@@ -18,6 +18,7 @@
 <link rel="stylesheet" href="assets/css/phases.css">
 <script src="data/profile.js"></script>
 <script src="assets/js/site.js"></script>
+<script src="data/phases.js"></script>
 <script src="assets/js/phase-core.js"></script>
 <script src="assets/js/phases.js"></script>
 </head>
@@ -51,15 +52,25 @@
     <div class="pv-toolbar">
       <div class="pv-seg"><button type="button" data-view="reciprocal" class="on">역공간</button><button type="button" data-view="real">실공간</button></div>
       <div class="pv-seg"><button type="button" data-mode="panels" class="on">나란히</button><button type="button" data-mode="overlay">겹쳐보기</button></div>
+      <label class="pv-field"><span>단면</span>
+        <select id="pv-section" class="pv-select" aria-label="역공간 단면">
+          <option value="">3차원 (돌려 보기)</option>
+          <option value="hk0">hk0 — a*b* 면</option>
+          <option value="h0l">h0l — a*c* 면</option>
+          <option value="0kl">0kl — b*c* 면</option>
+        </select>
+      </label>
       <button type="button" id="pv-paper" class="pv-btn">흰 배경</button>
       <button type="button" id="pv-reset" class="pv-btn">방향 초기화</button>
       <button type="button" id="pv-svg" class="pv-btn">SVG 저장</button>
+      <button type="button" id="pv-png" class="pv-btn">PNG 저장</button>
     </div>
     <div id="pv-figure" class="pv-figure"></div>
     <div class="pv-legend">
       <p><b>역공간</b> — 점 하나가 회절 반사 하나입니다. 위치는 <i>h</i>a* + <i>k</i>b* + <i>l</i>c*, 크기는 구조인자의 세기입니다. 소광으로 사라지는 반사는 그리지 않습니다. 점 크기는 <b>원자번호만으로 계산한 상대값</b>이라 회절 강도 계산이 아닙니다 — 산란인자의 각도 의존성, 열진동, 편광, 흡수가 모두 빠져 있습니다.</p>
       <p><b>실공간</b> — 큰 구가 첫 원소(보통 양이온), 작은 회색 구가 나머지입니다. 3.3 Å 아래의 양이온–양이온 거리만 선으로 잇고, 3.0 Å 아래는 굵게 그립니다. VO₂에서 금속상과 절연상을 가르는 것이 바로 이 거리입니다.</p>
       <p><b>겹쳐보기</b>는 세 개까지입니다. CIF에는 격자만 있고 결정이 어느 방향으로 놓였는지는 없으므로, 기준 상의 격자 위에 다른 상을 올리는 정수 변환을 찾아 적용합니다. 찾은 변환과 어긋남을 그림 아래에 적습니다. <b>기하학적으로 맞는 배치를 제안하는 것이지, 군–부분군 관계를 증명하는 것이 아닙니다.</b></p>
+      <p><b>단면</b>은 기준 상의 역격자 축 두 개가 만드는 면을 원점에서 자른 것으로, 역공간 지도(RSM)를 읽듯 평평하게 봅니다. 면에서 ±0.02 Å⁻¹ 안에 드는 반사만 그리므로, 겹쳐 놓은 다른 상의 점이 보인다면 그 점은 <b>실제로 이 영역(zone)에 있는 것</b>이지 멀리서 투영되어 겹쳐 보이는 것이 아닙니다. 단면에서는 그림을 돌릴 수 없습니다 — 면을 정면으로 봐야 면 안의 거리가 참값입니다.</p>
       <p class="pv-caveat">구조 데이터 출처: Crystallography Open Database (공개 자료). 각 후보의 COD 번호를 눌러 원 논문을 확인하십시오.</p>
     </div>
   </section>

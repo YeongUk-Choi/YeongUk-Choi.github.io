@@ -126,5 +126,46 @@ console.log("phase grouping");
   ok("M2 and the B phase stay apart", !same("1521122", "1530870"));
 }
 
+console.log("grouping keeps lengths paired with their opposite angles");
+{
+  /* alpha is the angle between b and c. Relabelling the axes moves a length
+     and its opposite angle together, so a comparison may permute - but it has
+     to permute both lists the same way. These two triclinic cells hold the
+     same three lengths and the same three angles, paired differently; they are
+     different lattices. Sorting lengths and angles into two independent
+     ascending lists cannot tell them apart. */
+  const cell = (a, b, c, al, be, ga) => ({ a, b, c, alpha: al, beta: be, gamma: ga });
+  const rec = (id, c) => ({ id, sgNumber: 2, cell: c });
+  const grouped = (x, y) => P.groupPhases([rec("x", x), rec("y", y)]).length === 1;
+
+  ok("two cells with the same six numbers paired differently stay apart",
+    !grouped(cell(5, 6, 7, 80, 90, 100), cell(5, 6, 7, 100, 90, 80)));
+  /* The permutation still has to be allowed, or one phase reported on two axis
+     settings would be filed as two phases. a<->b carries alpha<->beta. */
+  ok("the same lattice relabelled a<->b still groups",
+    grouped(cell(5, 6, 7, 80, 90, 100), cell(6, 5, 7, 90, 80, 100)));
+  ok("a genuinely different cell stays apart",
+    !grouped(cell(5, 6, 7, 80, 90, 100), cell(5, 6, 9, 80, 90, 100)));
+}
+
+console.log("unreadable records are reported, not half-drawn");
+{
+  /* parseCif reports what it could not follow as a missing field instead of
+     throwing. Without a check the viewer turns those into NaN geometry, and
+     the phase disappears from the figure with nothing said. A relayed CIF is
+     text this page did not write, so every field has to be treated as
+     possibly absent. */
+  const good = cache.entries.find(e => String(e.cod_id) === "3000344").cif;
+  ok("a readable CIF has no problem", P.structureProblem(P.parseCif(good)) === null);
+
+  const drop = re => P.structureProblem(P.parseCif(good.split("\n").filter(l => !re.test(l)).join("\n")));
+  ok("missing cell lengths are caught", /격자 상수/.test(drop(/_cell_length_/) || ""));
+  ok("missing cell angles are caught", /격자 각/.test(drop(/_cell_angle_/) || ""));
+  ok("missing atom sites are caught", /원자 자리/.test(drop(/_atom_site|^V1|^O1|^O2/m) || ""));
+  ok("an empty file is caught", P.structureProblem(P.parseCif("")) !== null);
+  ok("a flat cell (angles summing past 360) is caught",
+    P.structureProblem({ cell: { a: 5, b: 5, c: 5, alpha: 170, beta: 170, gamma: 170 }, atoms: [{ element: "V", x: 0, y: 0, z: 0 }] }) !== null);
+}
+
 console.log(fails ? `\n${fails} check(s) failed` : "\nall checks passed");
 process.exit(fails ? 1 : 0);

@@ -17,11 +17,22 @@
   "use strict";
   const C = window.PhaseCore;
   const $ = s => document.querySelector(s);
+  /* Space groups, mineral names and record URLs are database text, and once a
+     live COD relay is wired in they are remote text this page did not write.
+     Nothing from a record is ever handed to the HTML parser: el() has no html
+     branch, and a URL is only made a link if it is http(s). */
+  const safeUrl = u => (/^https?:\/\//i.test(String(u || "")) ? String(u) : null);
+  /* The namespace is chosen from the SVG side, not the HTML side. An HTML
+     allow-list silently puts anything it forgot into the SVG namespace, where
+     it parses but renders nothing: <b> and <code> inside a <p> disappeared
+     that way. Everything the figure draws is listed here; everything else is
+     HTML. */
+  const SVG_TAGS = new Set(["svg", "g", "rect", "line", "circle", "polygon", "polyline", "path", "text", "tspan", "defs", "marker", "ellipse", "title"]);
+  const SVG_NS = "http://www.w3.org/2000/svg";
   const el = (tag, attrs, kids) => {
-    const n = document.createElementNS(tag === "div" || tag === "button" || tag === "label" || tag === "span" || tag === "input" || tag === "select" || tag === "option" || tag === "p" || tag === "a" ? "http://www.w3.org/1999/xhtml" : "http://www.w3.org/2000/svg", tag);
+    const n = document.createElementNS(SVG_TAGS.has(tag) ? SVG_NS : "http://www.w3.org/1999/xhtml", tag);
     for (const k in (attrs || {})) {
       if (k === "text") n.textContent = attrs[k];
-      else if (k === "html") n.innerHTML = attrs[k];
       else if (attrs[k] != null) n.setAttribute(k, attrs[k]);
     }
     (kids || []).forEach(k => n.appendChild(k));
@@ -41,28 +52,88 @@
 
   const state = {
     formula: "", data: null, groups: [], pick: {}, chosen: [],
-    view: "reciprocal", mode: "panels", paper: false,
+    view: "reciprocal", mode: "panels", paper: false, section: "",
     yaw: -0.62, pitch: -0.42, qmax: 0.55, topN: 24, ref: 0
   };
 
-  /* ---------- data ---------- */
+  /* ---------- data ----------
+
+     Two sources, in this order:
+       1. data/phases/<formula>.json, committed by scripts/fetch_phases.py.
+          Instant, works while COD is down, no quota.
+       2. the Apps Script relay, for a composition nobody fetched in advance.
+          COD sends no Access-Control-Allow-Origin header, so the browser
+          cannot call it directly; the contract is in COD_PROXY.md.
+
+     The relay is off until the new Apps Script is deployed and checked - see
+     data/phases.js for why turning it on early would lock the helium log. */
+
+  const relay = () => {
+    const cfg = (window.SITE && window.SITE.phases) || {};
+    return cfg.live && cfg.relayUrl ? String(cfg.relayUrl) : null;
+  };
+
+  /* A COD search row and a cached entry describe the same thing in different
+     words. Everything the viewer compares arithmetically is made a number
+     here: COD sends "9.083", and a string cell silently breaks lattice
+     grouping - every record would become its own candidate. */
+  const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  function fromCodRow(r) {
+    const e = {
+      cod_id: String(r.file), formula: r.formula, spacegroup: r.sg || "?", sg_number: num(r.sgNumber),
+      a: num(r.a), b: num(r.b), c: num(r.c),
+      alpha: num(r.alpha), beta: num(r.beta), gamma: num(r.gamma), volume: num(r.vol),
+      temperature: num(r.celltemp), title: r.title || "", authors: r.authors || "",
+      journal: r.journal || "", year: num(r.year), doi: r.doi || "",
+      mineral: r.mineral || "", chemname: r.chemname || "",
+      url: `https://www.crystallography.net/cod/${encodeURIComponent(String(r.file))}.html`,
+      cif: null                              /* fetched only when it is drawn */
+    };
+    return e;
+  }
+
+  /* COD rows carry no cell for a few records; without a lattice there is
+     nothing to group or draw, so they are dropped and counted out loud. */
+  const hasCell = e => [e.a, e.b, e.c, e.alpha, e.beta, e.gamma].every(v => v != null && v > 0);
+
+  async function relaySearch(name) {
+    const r = await fetch(`${relay()}?action=cod&formula=${encodeURIComponent(name)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(`중계 서버가 HTTP ${r.status}을 돌려주었습니다`);
+    const j = await r.json();
+    if (!j || j.ok !== true) throw new Error((j && j.error) || "중계 서버가 오류를 돌려주었습니다");
+    const rows = (j.records || []).map(fromCodRow);
+    const usable = rows.filter(hasCell);
+    return { formula: j.formula || name, fetched: (j.fetched_at || "").slice(0, 10),
+      source: "COD (relay)", cached: !!j.cached, dropped: rows.length - usable.length,
+      entries: usable };
+  }
 
   async function loadFormula(text) {
     const name = String(text || "").trim().replace(/\s+/g, "");
     if (!name) return;
     state.formula = name;
     status("COD 캐시를 읽는 중…");
+    let live = false;
     try {
       const r = await fetch(`data/phases/${encodeURIComponent(name)}.json`, { cache: "no-store" });
       if (!r.ok) throw new Error("not cached");
       state.data = await r.json();
     } catch (e) {
       state.data = null;
-      state.groups = []; state.chosen = []; state.pick = {};
-      render();
-      const have = (window.PHASE_INDEX || []).map(x => x.formula);
-      status(`‘${name}’은(는) 아직 이 사이트에 받아 둔 조성이 아닙니다. 지금 있는 것: ${have.join(", ") || "없음"}`, true);
-      return;
+      if (relay()) {
+        status(`받아 둔 조성이 아니어서 COD에 직접 물어보는 중… (‘${name}’)`);
+        try { state.data = await relaySearch(name); live = true; }
+        catch (err) { state.data = null; status(`COD 검색이 되지 않았습니다 — ${err.message}`, true); }
+      }
+      if (!state.data) {
+        state.groups = []; state.chosen = []; state.pick = {};
+        render();
+        if (!relay()) {
+          const have = (window.PHASE_INDEX || []).map(x => x.formula);
+          status(`‘${name}’은(는) 아직 이 사이트에 받아 둔 조성이 아닙니다. 지금 있는 것: ${have.join(", ") || "없음"}`, true);
+        }
+        return;
+      }
     }
     /* One COD record is one publication, not one phase. Group first, then let
        the reader choose which record of a phase to draw. */
@@ -70,8 +141,38 @@
     state.groups = C.groupPhases(recs);
     state.pick = {}; state.chosen = []; state.ref = 0;
     state.groups.forEach((g, i) => { state.pick[i] = 0; });
-    status(`COD 레코드 ${recs.length}건 → 구조 후보 ${state.groups.length}개 (받아 둔 날짜 ${state.data.fetched})`);
+    /* Candidates, not phases: grouping agrees on the lattice metric to a
+       tolerance, which is evidence and not proof that two records are the
+       same phase. */
+    const where = live
+      ? `COD 즉석 검색${state.data.cached ? " (중계 캐시)" : ""}`
+      : `받아 둔 날짜 ${state.data.fetched}`;
+    const dropped = state.data.dropped ? `, 격자가 없어 뺀 레코드 ${state.data.dropped}건` : "";
+    status(`COD 레코드 ${recs.length}건 → 유사 격자 후보 ${state.groups.length}개 (${where}${dropped})`);
     render();
+  }
+
+  /* The search gives a lattice; the drawing needs atoms, which live in the
+     CIF. Over the relay that is one request per record, so a CIF is fetched
+     when its box is ticked rather than all of them up front. */
+  async function fetchCif(rec) {
+    if (rec.cif) return null;
+    if (!relay()) return "이 레코드에는 CIF가 들어 있지 않습니다";
+    try {
+      const r = await fetch(`${relay()}?action=cif&id=${encodeURIComponent(rec.id)}`, { cache: "no-store" });
+      const text = await r.text();
+      /* The relay answers a failure with JSON and a success with the CIF
+         itself, so the body decides which one arrived. */
+      if (!r.ok || /^\s*\{/.test(text)) {
+        let msg = `HTTP ${r.status}`;
+        try { const j = JSON.parse(text); if (j && j.error) msg = j.error; } catch (e) { /* keep the status */ }
+        return `COD ${rec.id}의 CIF를 받지 못했습니다 — ${msg}`;
+      }
+      rec.cif = text;
+      return null;
+    } catch (e) {
+      return `COD ${rec.id}의 CIF를 받지 못했습니다 — ${e.message}`;
+    }
   }
 
   const status = (msg, warn) => {
@@ -85,15 +186,31 @@
   const cache = new Map();
   function structure(rec) {
     if (!cache.has(rec.id)) {
-      const p = C.parseCif(rec.cif);
-      p.atoms = C.expandAtoms(p.atoms, p.symops);
-      p.vectors = C.cellVectors(p.cell);
-      cache.set(rec.id, p);
+      let p = null, problem = null;
+      try {
+        p = C.parseCif(rec.cif || "");
+        problem = C.structureProblem(p);
+        if (!problem) {
+          p.atoms = C.expandAtoms(p.atoms, p.symops);
+          p.vectors = C.cellVectors(p.cell);
+        }
+      } catch (e) {
+        problem = "CIF를 읽는 중 오류가 났습니다" + (e && e.message ? ` (${e.message})` : "");
+      }
+      cache.set(rec.id, problem ? { problem } : p);
     }
     return cache.get(rec.id);
   }
+  /* A record whose CIF has not arrived yet is not a failure - it is simply not
+     drawable yet, and must not be run through the parser. */
+  const pending = rec => !rec.cif;
+  /* A record this reader cannot follow is shown as a failed candidate and kept
+     out of every figure. Drawing half of it would be worse than not drawing
+     it: a cell with one missing length still renders a box. */
+  const problemOf = rec => (pending(rec) ? null : structure(rec).problem || null);
 
-  const chosenRecords = () => state.chosen.map(i => state.groups[i][state.pick[i] || 0]);
+  const recordOf = i => state.groups[i][state.pick[i] || 0];
+  const chosenRecords = () => state.chosen.map(recordOf);
 
   /* A name is only written where the database supports one; otherwise the
      candidate is identified by its space group and cell. */
@@ -107,16 +224,28 @@
 
   /* ---------- selection ---------- */
 
-  function toggle(i, on) {
+  async function toggle(i, on) {
     const cap = state.mode === "overlay" ? MAX_OVERLAY : MAX_PANELS;
     if (on) {
       if (state.chosen.includes(i)) return;
+      const rec = recordOf(i);
+      /* The cap is checked before the request, so a refused pick costs COD
+         nothing. */
       if (state.chosen.length >= cap) {
         status(state.mode === "overlay"
           ? `겹쳐보기는 ${MAX_OVERLAY}개까지입니다. 네 번째 색은 색각 이상에서 구분되지 않아 넣지 않습니다 — 나란히 보기로 바꾸면 ${MAX_PANELS}개까지 됩니다.`
           : `나란히 보기는 ${MAX_PANELS}개까지입니다.`, true);
         render(); return;
       }
+      if (pending(rec)) {
+        status(`COD ${rec.id}의 CIF를 받는 중…`);
+        const err = await fetchCif(rec);
+        if (err) { status(err, true); render(); return; }
+        status("");
+      }
+      const bad = problemOf(rec);
+      if (bad) { status(`이 레코드는 그릴 수 없습니다 — ${bad}`, true); render(); return; }
+      if (state.chosen.includes(i) || state.chosen.length >= cap) { render(); return; }
       state.chosen.push(i);
     } else {
       state.chosen = state.chosen.filter(x => x !== i);
@@ -145,6 +274,34 @@
     return { corner, pairs, o };
   };
 
+  /* A reciprocal-space section: the zero layer of a zone, drawn flat, the way
+     a reciprocal-space map is read. The plane is spanned by two of the
+     reference phase's reciprocal axes and passes through the origin, so hk0 is
+     a* with b*. Overlaid phases are already expressed in the reference frame,
+     so one plane serves every layer - which is the point: it shows which
+     reflections of the other phases actually fall in the zone, not which ones
+     happen to project near it from somewhere else in the sphere. */
+  const SECTIONS = {
+    "hk0": { axes: [0, 1], names: ["a*", "b*"], label: "hk0" },
+    "h0l": { axes: [0, 2], names: ["a*", "c*"], label: "h0l" },
+    "0kl": { axes: [1, 2], names: ["b*", "c*"], label: "0kl" }
+  };
+  /* Half-thickness of the slab, in 1/A. A phase overlaid with a 1 % lattice
+     misfit sits a few thousandths off the reference plane; anything much
+     thicker starts admitting the next layer up. */
+  const SLAB = 0.02;
+  const sectionOn = () => !!(state.section && state.view === "reciprocal" && SECTIONS[state.section]);
+
+  function sectionFrame(B) {
+    const [i, j] = SECTIONS[state.section].axes;
+    const u = B[i], v = B[j];
+    const e1 = C.norm(u) ? u.map(x => x / C.norm(u)) : [1, 0, 0];
+    const vp = v.map((x, t) => x - C.dot(v, e1) * e1[t]);
+    const e2 = C.norm(vp) ? vp.map(x => x / C.norm(vp)) : [0, 1, 0];
+    const n = C.cross(e1, e2);
+    return { e1, e2, n, names: SECTIONS[state.section].names };
+  }
+
   /* Everything a panel draws, in one Cartesian frame, before projection. */
   function sceneFor(rec, frame) {
     const st = structure(rec);
@@ -154,7 +311,10 @@
          rutile volume has four times the reciprocal points, so drawing every
          one of them inside the same sphere buries the small cell and the figure
          stops carrying a message. Each phase contributes its strongest few. */
-      const refl = C.reflections(A, st.atoms, { qmax: state.qmax, maxIndex: 5 }).slice(0, state.topN);
+      /* A section throws most of the sphere away, so the cut is made on a
+         deep list and trimmed to topN afterwards; trimming first would leave a
+         near-empty plane. */
+      const refl = C.reflections(A, st.atoms, { qmax: state.qmax, maxIndex: 5 }).slice(0, sectionOn() ? 600 : state.topN);
       const B = C.reciprocalVectors(A);
       return { kind: "q", points: refl.map(r => ({ p: r.q, r: 2.2 + 4.0 * Math.sqrt(r.rel), hkl: [r.h, r.k, r.l], rel: r.rel })), basis: B, st };
     }
@@ -207,10 +367,21 @@
 
   /* ---------- SVG ---------- */
 
+  /* Controls that only make sense in one view are disabled rather than left
+     looking as if they did something. Done in one place, because the section
+     and the view can each be changed from the other's handler. */
+  function syncControls() {
+    const flat = sectionOn();
+    $("#pv-section").disabled = state.view !== "reciprocal";
+    $("#pv-reset").disabled = flat;
+    $("#pv-figure").classList.toggle("flat", flat);
+  }
+
   function draw() {
+    syncControls();
     const host = $("#pv-figure");
     host.textContent = "";
-    const recs = chosenRecords();
+    const recs = chosenRecords().filter(r => !pending(r) && !problemOf(r));
     if (!recs.length) {
       host.appendChild(el("p", { class: "pv-empty", text: "왼쪽에서 구조를 선택하면 그림이 그려집니다." }));
       return;
@@ -247,9 +418,14 @@
     const list = el("div", { class: "pv-relation" });
     layers.slice(1).forEach(L => {
       const P = L.P.P.map(r => r.join(" ")).join(" / ");
-      list.appendChild(el("p", {
-        html: `<b style="color:${L.color}">${L.rec.spacegroup} · COD ${L.rec.id}</b> — 기준 격자 위에 올린 변환 <code>[${P}]</code>, 격자 어긋남 ${(L.P.misfit * 100).toFixed(2)} %, 부피비 ${L.P.det}×. <span class="pv-caveat">기하학적 일치를 찾은 것이며, 군·부분군 유도가 아닙니다.</span>`
-      }));
+      const line = el("p", {}, [
+        el("b", { style: `color:${L.color}`, text: `${L.rec.spacegroup} · COD ${L.rec.id}` }),
+        el("span", { text: " — 기준 격자 위에 올린 변환 " }),
+        el("code", { text: `[${P}]` }),
+        el("span", { text: `, 격자 어긋남 ${(L.P.misfit * 100).toFixed(2)} %, 부피비 ${L.P.det}×. ` }),
+        el("span", { class: "pv-caveat", text: "기하학적 일치를 찾은 것이며, 군·부분군 유도가 아닙니다." })
+      ]);
+      list.appendChild(line);
     });
     notes.forEach(n => list.appendChild(el("p", { class: "pv-caveat", text: `${n.rec.spacegroup} · COD ${n.rec.id} — ${n.text}` })));
     wrap.appendChild(list);
@@ -262,22 +438,34 @@
     svg.appendChild(el("rect", { x: 0, y: 0, width: W, height: H, fill: state.paper ? "#ffffff" : "none" }));
 
     const scenes = layers.map(L => ({ L, S: sceneFor(L.rec, L.frame) }));
+
+    /* In a section the figure is flat, so the model rotation is not applied:
+       the plane is drawn face on, which is the only view in which distances
+       inside it are true. */
+    const cut = sectionOn() && scenes[0].S.kind === "q" ? sectionFrame(scenes[0].S.basis) : null;
+    if (cut) scenes.forEach(({ S }) => {
+      S.points = S.points.filter(p => Math.abs(C.dot(p.p, cut.n)) <= SLAB).slice(0, state.topN);
+    });
+    const proj = cut ? (p => [C.dot(p, cut.e1), C.dot(p, cut.e2), 0]) : rotate;
+
     /* One scale for every layer in the panel: an overlay whose phases were
        scaled independently would show a relation that is not there. */
     let span = 0;
     scenes.forEach(({ S }) => {
-      S.points.forEach(p => { span = Math.max(span, C.norm(p.p)); });
-      cellEdges(S.basis).corner.forEach(c => { span = Math.max(span, C.norm(c)); });
+      /* Out of section the extent is measured in three dimensions so that the
+         figure does not breathe while it is being dragged. */
+      S.points.forEach(p => { const q = proj(p.p); span = Math.max(span, cut ? Math.hypot(q[0], q[1]) : C.norm(p.p)); });
+      if (!cut) cellEdges(S.basis).corner.forEach(c => { span = Math.max(span, C.norm(c)); });
     });
     const k = (Math.min(W, H) * 0.40) / (span || 1);
     const cx = W / 2, cy = H / 2 + 6;
-    const to2 = p => { const r = rotate(p); return [cx + r[0] * k, cy - r[1] * k, r[2]]; };
+    const to2 = p => { const r = proj(p); return [cx + r[0] * k, cy - r[1] * k, r[2]]; };
 
     const g = el("g", {});
     scenes.forEach(({ L, S }) => {
       const dashed = layers.length > 1 && L.mark > 0;
       const E = cellEdges(S.basis);
-      E.pairs.forEach(([i, j]) => {
+      if (!cut) E.pairs.forEach(([i, j]) => {
         const a = to2(E.corner[i]), b = to2(E.corner[j]);
         g.appendChild(el("line", {
           x1: a[0].toFixed(1), y1: a[1].toFixed(1), x2: b[0].toFixed(1), y2: b[1].toFixed(1),
@@ -338,8 +526,9 @@
     }
 
     /* Axis triad of the panel's frame, drawn from the origin. */
-    const B = scenes[0].S.basis;
-    const names = scenes[0].S.kind === "q" ? ["a*", "b*", "c*"] : ["a", "b", "c"];
+    const B0 = scenes[0].S.basis;
+    const B = cut ? SECTIONS[state.section].axes.map(i => B0[i]) : B0;
+    const names = cut ? cut.names : (scenes[0].S.kind === "q" ? ["a*", "b*", "c*"] : ["a", "b", "c"]);
     const ag = el("g", {});
     const o = to2([0, 0, 0]);
     B.forEach((v, i) => {
@@ -350,6 +539,8 @@
     svg.appendChild(ag);
 
     if (title) svg.appendChild(el("text", { x: 10, y: 18, fill: ink, "font-size": 12, text: title }));
+    if (cut) svg.appendChild(el("text", { x: 10, y: 33, fill: ink, "font-size": 10.5, opacity: 0.75,
+      text: `${SECTIONS[state.section].label} 단면 · 면에서 ±${SLAB} Å⁻¹ 안의 반사만` }));
     /* The number the real-space panel exists to show. */
     const dmin = scenes[0].S.dmin;
     if (dmin) svg.appendChild(el("text", { x: 10, y: H - 10, fill: ink, "font-size": 11, opacity: 0.8,
@@ -372,10 +563,14 @@
     list.textContent = "";
     state.groups.forEach((g, i) => {
       const L = groupLabel(g);
+      const rec = recordOf(i);
+      const bad = problemOf(rec);
+      if (bad) state.chosen = state.chosen.filter(x => x !== i);
       const on = state.chosen.includes(i);
-      const row = el("div", { class: "pv-row" + (on ? " on" : "") });
+      const row = el("div", { class: "pv-row" + (on ? " on" : "") + (bad ? " bad" : "") });
       const box = el("input", { type: "checkbox", id: "pv-g" + i });
       if (on) box.setAttribute("checked", "checked");
+      if (bad) { box.disabled = true; box.setAttribute("disabled", "disabled"); }
       box.addEventListener("change", e => toggle(i, e.target.checked));
       const head = el("label", { for: "pv-g" + i, class: "pv-head" }, [
         el("span", { class: "pv-sg", text: L.head }),
@@ -383,6 +578,9 @@
       ]);
       if (L.name) head.appendChild(el("span", { class: "pv-name", text: L.name }));
       row.appendChild(box); row.appendChild(head);
+      /* A record the parser could not follow is named and kept out of the
+         figure, rather than drawn from whatever fields happened to survive. */
+      if (bad) row.appendChild(el("span", { class: "pv-bad", text: `그리기 실패 — ${bad}` }));
       if (g.length > 1) {
         const sel = el("select", { class: "pv-pick" });
         g.forEach((r, j) => {
@@ -390,11 +588,28 @@
           if ((state.pick[i] || 0) === j) o.setAttribute("selected", "selected");
           sel.appendChild(o);
         });
-        sel.addEventListener("change", e => { state.pick[i] = +e.target.value; draw(); });
+        /* Re-render, not just redraw: another report of the same phase may be
+           one the parser cannot read, and the row has to say so. Over the
+           relay it may also be one whose CIF has not been fetched yet, and a
+           chosen row must not quietly drop out of the figure. */
+        sel.addEventListener("change", async e => {
+          state.pick[i] = +e.target.value;
+          const rec = recordOf(i);
+          if (state.chosen.includes(i) && pending(rec)) {
+            status(`COD ${rec.id}의 CIF를 받는 중…`);
+            const err = await fetchCif(rec);
+            if (err) { state.chosen = state.chosen.filter(x => x !== i); status(err, true); }
+            else status("");
+          }
+          render();
+        });
         row.appendChild(sel);
         row.appendChild(el("span", { class: "pv-multi", text: `같은 구조를 보고한 논문 ${g.length}건` }));
       } else {
-        row.appendChild(el("a", { class: "pv-link", href: g[0].url, target: "_blank", rel: "noreferrer", text: `COD ${g[0].id} ↗` }));
+        const href = safeUrl(g[0].url);
+        row.appendChild(href
+          ? el("a", { class: "pv-link", href, target: "_blank", rel: "noreferrer", text: `COD ${g[0].id} ↗` })
+          : el("span", { class: "pv-link", text: `COD ${g[0].id}` }));
       }
       list.appendChild(row);
     });
@@ -402,17 +617,79 @@
     draw();
   }
 
-  function exportSvg() {
-    const svg = $("#pv-figure svg");
-    if (!svg) return;
-    const copy = svg.cloneNode(true);
-    copy.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    const blob = new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + copy.outerHTML], { type: "image/svg+xml" });
+  /* ---------- export ----------
+
+     Both exports go through one composite: a panel grid is several <svg>
+     elements, and saving only the first - which is what a querySelector would
+     do - silently drops every phase but one. The page font is written onto the
+     exported root because the stylesheet does not travel with the file, and
+     the background is painted in because the dark figure draws on the page,
+     not on itself. */
+
+  const EXPORT_FONT = "-apple-system, 'Apple SD Gothic Neo', 'Segoe UI', Helvetica, Arial, sans-serif";
+
+  function composite() {
+    const svgs = Array.from(document.querySelectorAll("#pv-figure svg"));
+    if (!svgs.length) return null;
+    const box = svgs.map(n => n.getBoundingClientRect());
+    const minX = Math.min.apply(null, box.map(b => b.left));
+    const minY = Math.min.apply(null, box.map(b => b.top));
+    const W = Math.ceil(Math.max.apply(null, box.map(b => b.right)) - minX) + 16;
+    const H = Math.ceil(Math.max.apply(null, box.map(b => b.bottom)) - minY) + 16;
+    const parts = svgs.map((n, i) => {
+      const c = n.cloneNode(true);
+      c.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      c.setAttribute("x", (box[i].left - minX + 8).toFixed(1));
+      c.setAttribute("y", (box[i].top - minY + 8).toFixed(1));
+      c.setAttribute("width", box[i].width.toFixed(1));
+      c.setAttribute("height", box[i].height.toFixed(1));
+      return c.outerHTML;
+    });
+    const bg = state.paper ? "#ffffff" : "#050507";
+    return {
+      W, H,
+      markup: `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${EXPORT_FONT}">`
+        + `<rect width="${W}" height="${H}" fill="${bg}"/>${parts.join("")}</svg>`
+    };
+  }
+
+  const baseName = () => `${state.formula || "phases"}-${state.view}${sectionOn() ? "-" + state.section : ""}`;
+
+  function save(blob, ext) {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${state.formula || "phases"}-${state.view}.svg`;
+    a.download = `${baseName()}.${ext}`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    /* The object URL is released after the click has been dispatched, not in
+       the same statement: the browser reads the blob when it starts the
+       download, and revoking inside the same task has been known to race it. */
+    setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+  }
+
+  function exportSvg() {
+    const c = composite();
+    if (!c) return;
+    save(new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n' + c.markup], { type: "image/svg+xml" }), "svg");
+  }
+
+  function exportPng() {
+    const c = composite();
+    if (!c) return;
+    const scale = 2;                       /* a figure for a slide or a paper */
+    const url = URL.createObjectURL(new Blob([c.markup], { type: "image/svg+xml;charset=utf-8" }));
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement("canvas");
+      cv.width = c.W * scale; cv.height = c.H * scale;
+      const ctx = cv.getContext("2d");
+      ctx.fillStyle = state.paper ? "#ffffff" : "#050507";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b => { if (b) save(b, "png"); else status("PNG를 만들지 못했습니다 — SVG 저장을 쓰십시오.", true); }, "image/png");
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); status("PNG를 만들지 못했습니다 — SVG 저장을 쓰십시오.", true); };
+    img.src = url;
   }
 
   function wire() {
@@ -420,6 +697,9 @@
     document.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {
       state.view = b.dataset.view;
       document.querySelectorAll("[data-view]").forEach(x => x.classList.toggle("on", x === b));
+      /* A section is a cut through the reciprocal lattice; there is nothing to
+         cut in the real-space view, so the control is shown as unavailable
+         rather than left looking as if it did something. */
       draw();
     }));
     document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => {
@@ -439,13 +719,15 @@
     });
     $("#pv-reset").addEventListener("click", () => { state.yaw = -0.62; state.pitch = -0.42; draw(); });
     $("#pv-svg").addEventListener("click", exportSvg);
+    $("#pv-png").addEventListener("click", exportPng);
+    $("#pv-section").addEventListener("change", e => { state.section = e.target.value; draw(); });
     /* Drag to turn the model; the figure is three-dimensional and a fixed view
        hides whichever relation happens to be edge-on. */
     let drag = null;
     $("#pv-figure").addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, yaw: state.yaw, pitch: state.pitch }; });
     window.addEventListener("pointerup", () => { drag = null; });
     window.addEventListener("pointermove", e => {
-      if (!drag) return;
+      if (!drag || sectionOn()) return;   /* a section is drawn face on */
       state.yaw = drag.yaw + (e.clientX - drag.x) * 0.008;
       state.pitch = Math.max(-1.4, Math.min(1.4, drag.pitch - (e.clientY - drag.y) * 0.008));
       draw();
