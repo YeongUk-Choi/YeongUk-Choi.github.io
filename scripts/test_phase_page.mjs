@@ -352,6 +352,33 @@ try {
   ok("and its own candidate list", (await text("#pv-list")) !== oldRow);
   cifDelay = 0; relayMode = "filter";
 
+  /* Neither the list nor the record moves here - what changes is whether the
+     reader still wants the row. A tick taken back while its CIF is in the air
+     must not put the phase back into the figure when the CIF lands. */
+  await search("TiO2", "136");
+  await waitStatus(/공간군 136번/);
+  cifDelay = 900;
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  await sleep(150);
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  ok("unticking while the CIF is on its way takes effect at once",
+    (await run(`document.querySelectorAll("#pv-list input:checked").length`)) === 0);
+  await sleep(1300);                       /* the CIF for the cancelled tick lands */
+  ok("a cancelled tick is not restored by its own CIF",
+    (await run(`document.querySelectorAll("#pv-list input:checked").length`)) === 0
+    && (await run(`document.querySelectorAll("#pv-figure svg").length`)) === 0,
+    await text("#pv-status"));
+  /* Ticking it again afterwards still works: the row was cancelled, not
+     poisoned. */
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  await sleep(1400);
+  ok("the same row can still be ticked afterwards",
+    (await run(`document.querySelectorAll("#pv-list input:checked").length`)) === 1
+    && (await run(`document.querySelectorAll("#pv-figure svg").length`)) > 0,
+    await text("#pv-status"));
+  await run(`document.querySelectorAll("#pv-list input[type=checkbox]")[0].click()`);
+  cifDelay = 0;
+
   console.log("ending and resuming a session");
   await run(`document.querySelector("#pv-lock").click()`);
   await sleep(900);

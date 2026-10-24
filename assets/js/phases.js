@@ -315,6 +315,17 @@
   const stillShowing = (seq, groups, i, rec) =>
     seq === searchSeq && state.groups === groups && !!state.groups[i] && recordOf(i) === rec;
 
+  /* The list and the record can both survive a CIF request and the row still
+     not be the reader's: ticking a row starts the request, and unticking it -
+     or changing which report it draws - while the request is in the air
+     changes the intent, not the data. stillShowing cannot see that, because
+     nothing it compares has moved. Every click on a row raises that row's own
+     counter, so a completion can tell whether it is still the one being
+     waited for; a stale one is dropped instead of putting a phase back into
+     the figure that was taken out of it. */
+  const rowOps = new Map();
+  const rowOp = i => { const n = (rowOps.get(i) || 0) + 1; rowOps.set(i, n); return n; };
+
   /* A name is only written where the database supports one; otherwise the
      candidate is identified by its space group and cell. */
   function groupLabel(g) {
@@ -329,6 +340,7 @@
 
   async function toggle(i, on) {
     const cap = state.mode === "overlay" ? MAX_OVERLAY : MAX_PANELS;
+    const op = rowOp(i);
     if (on) {
       if (state.chosen.includes(i)) return;
       const rec = recordOf(i);
@@ -346,7 +358,8 @@
            stillShowing. */
         const seq = searchSeq, groups = state.groups;
         const err = await fetchCif(rec);
-        if (!stillShowing(seq, groups, i, rec)) return;   /* this row is gone */
+        /* the row is gone, or this tick was taken back while the CIF travelled */
+        if (!stillShowing(seq, groups, i, rec) || rowOps.get(i) !== op) return;
         if (err) { status(err, true); render(); return; }
         status("");
       }
@@ -704,9 +717,9 @@
           const rec = recordOf(i);
           if (state.chosen.includes(i) && pending(rec)) {
             status(`COD ${rec.id}의 CIF를 받는 중…`);
-            const seq = searchSeq, groups = state.groups;
+            const seq = searchSeq, groups = state.groups, op = rowOp(i);
             const err = await fetchCif(rec);
-            if (!stillShowing(seq, groups, i, rec)) return;
+            if (!stillShowing(seq, groups, i, rec) || rowOps.get(i) !== op) return;
             if (err) { state.chosen = state.chosen.filter(x => x !== i); status(err, true); }
             else status("");
           }
