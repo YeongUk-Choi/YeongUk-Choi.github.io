@@ -2,18 +2,18 @@
 // 손으로 고치는 칸: image(assets/img/pubs/…), imageCaption, imageCredit(라이선스·출처), featured(상단 고정), abstract(닫힌 논문).
 // 이 칸들은 스크립트를 다시 돌려도 DOI 기준으로 보존됩니다. Google Scholar는 프로필 링크로만 씁니다.
 window.SITE = window.SITE || {};
-window.SITE.publicationsMeta = {"source": "scholar", "updated": "2026-10-18", "count": 11, "scholarUser": "GAX2tHgAAAAJ"};
+window.SITE.publicationsMeta = {"source": "scholar", "updated": "2026-10-25", "count": 11, "scholarUser": "GAX2tHgAAAAJ"};
 window.SITE.publications = [
   {
     "year": 2026,
     "title": "Promoting Gas Sensitivity of Graphitic Carbon Nitride via Incorporation of Platinum Nanoparticles under Blue-Light Irradiation",
     "authors": "Jong Hun Kim, Gayoung Yoon, Dheeraj Kumar, Yeong Uk Choi, Ying Chieh Hu, Ali Mirzaei, Kyuwook Ihm, Jeong Young Park, Sang Sub Kim, Jong Hoon Jung, Jae-Hun Kim",
     "journal": "ACS Sensors",
-    "volume": "",
-    "issue": "",
-    "page": "acssensors.6c01299",
+    "volume": "11",
+    "issue": "10",
+    "page": "8978-8990",
     "doi": "10.1021/acssensors.6c01299",
-    "abstract": "Research on van der Waals layered materials offers opportunities to explore diverse scientific phenomena at the nano- and atomic scales, along with their promising technological potential. Among the material family, graphitic carbon nitride (g-C 3 N 4 ) has attracted substantial research attention due to its simple synthesis process, tunable electronic structure properties, and exceptional physicochemical properties arising from good interfacial compatibility with other materials. In this research, we investigated the potential of g-C 3 N 4 as a gas sensing material. To overcome its intrinsically poor conductivity and limited surface activity, the electronic band structure of g-C 3 N 4 was deliberately modulated through hybridization with Pt nanoparticles, which promotes surface conductivity and suppresses charge recombination. The formation of Pt/g-C 3 N 4 heterojunctions sufficiently modulated the interfacial band structure upon gas absorption, resulting in pronounced sensitivity toward NO 2, NH 3, CO, H 2 S molecules, relative to a pristine g-C 3 N 4 sensor. Furthermore, sensing properties were investigated under blue-light (BL; λ = 457 nm) illumination with intensity of 1.55 W/m 2 . The photoinduced charge excitation led to distinctively different response for oxidizing and reducing nature of the target gases, and sensitivity and selectivity to NO 2 gas molecules were significantly improved. This BL-assisted, gas-dependent response contrast provides insight into the underlying gas-sensing mechanism. Overall, this work elucidates how interfacial band engineering and photoexcited carrier dynamics govern gas sensing in g-C 3 N 4 -based systems, offering a mechanistic framework for advanced design of high-performance gas sensors.",
+    "abstract": "Research on van der Waals layered materials offers opportunities to explore diverse scientific phenomena at the nano- and atomic scales, along with their promising technological potential. Among the material family, graphitic carbon nitride (g-C3N4) has attracted substantial research attention due to its simple synthesis process, tunable electronic structure properties, and exceptional physicochemical properties arising from good interfacial compatibility with other materials. In this research, we investigated the potential of g-C3N4 as a gas sensing material. To overcome its intrinsically poor conductivity and limited surface activity, the electronic band structure of g-C3N4 was deliberately modulated through hybridization with Pt nanoparticles, which promotes surface conductivity and suppresses charge recombination. The formation of Pt/g-C3N4 heterojunctions sufficiently modulated the interfacial band structure upon gas absorption, resulting in pronounced sensitivity toward NO2, NH3, CO, H2S molecules, relative to a pristine g-C3N4 sensor. Furthermore, sensing properties were investigated under blue-light (BL; λ = 457 nm) illumination with intensity of 1.55 W/m2. The photoinduced charge excitation led to distinctively different response for oxidizing and reducing nature of the target gases, and sensitivity and selectivity to NO2 gas molecules were significantly improved. This BL-assisted, gas-dependent response contrast provides insight into the underlying gas-sensing mechanism. Overall, this work elucidates how interfacial band engineering and photoexcited carrier dynamics govern gas sensing in g-C3N4-based systems, offering a mechanistic framework for advanced design of high-performance gas sensors.",
     "license": "https://doi.org/10.15223/policy-029",
     "image": "",
     "imageCaption": "",
