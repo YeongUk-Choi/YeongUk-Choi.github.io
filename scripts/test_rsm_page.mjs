@@ -155,6 +155,11 @@ try {
     await writeFile(path.join(output, "RSM_MAP.png"), png);
   });
   await check("shorter wavelength shows enumeration warning and manual qmax expansion clears it", async () => {
+    assert.doesNotMatch(await run("document.getElementById('warnings').textContent"), /enumeration stops at/);
+    await click("mask"); await ready();
+    assert.match(await run("document.getElementById('warnings').textContent"), /enumeration stops at 1\.3/);
+    await click("mask"); await ready();
+    assert.doesNotMatch(await run("document.getElementById('warnings').textContent"), /enumeration stops at/);
     await input("lambda", 1); await ready();
     assert.equal(await run("Number(document.getElementById('qmax').value)"), 1.3);
     assert.match(await run("document.getElementById('warnings').textContent"), /enumeration stops at 1\.3/);

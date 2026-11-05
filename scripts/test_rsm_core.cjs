@@ -171,6 +171,18 @@ test("q-range coverage warns for both planes and offset slices without warning a
     assert.equal(warned(R.simulate({ ...state, plane, grid, qmax: 1.5 })), false);
   }
 });
+test("q-range warning uses the detector limit only when the coplanar mask applies", () => {
+  const state = { film: layer(), maxIndex: 6, mask: true, qmax: 1, lambda: 1, twoThetaMax: 60,
+    grid: { width: 64, height: 64, xmin: -1.1, xmax: 1.1, ymin: 0, ymax: 1.2 } };
+  const warned = result => result.warnings.some(w => /enumeration stops at/.test(w));
+  // At 2θmax=60° and λ=1 Å the radial reach is 1 Å⁻¹, inside this view.
+  assert.equal(warned(R.simulate(state)), false);
+  assert.equal(warned(R.simulate({ ...state, qmax: 0.99 })), true);
+  assert.equal(warned(R.simulate({ ...state, twoThetaMax: 180 })), true);
+  assert.equal(warned(R.simulate({ ...state, mask: false })), true);
+  assert.equal(warned(R.simulate({ ...state, plane: "xy" })), true);
+  assert.equal(warned(R.simulate({ ...state, grid: { ...state.grid, xmin: -0.3, xmax: 0.3, ymax: 0.4 }, qmax: 0.6 })), false);
+});
 test("variant weights conserve an identical-domain map and zero scale produces zero intensity", () => {
   const state = { film: layer(), maxIndex: 3, qmax: 1, mask: false,
     grid: { width: 100, height: 100, xmin: 0.1, xmax: 0.5, ymin: 0.3, ymax: 0.8 } };

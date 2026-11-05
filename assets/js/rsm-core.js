@@ -249,10 +249,11 @@
     const arrays = { substrate: new Float32Array(width * height), film: new Float32Array(width * height), total: new Float32Array(width * height) };
     const warnings = [], table = [], jobs = [];
     const qmax = number(state.qmax, 1.4, 0.0001, 3.999999999, "Maximum q");
-    // The slice is the third orthogonal coordinate in either plane. This is a
-    // conservative view-coverage check, independent of the accessibility mask.
+    // The slice is the third orthogonal coordinate in either plane. With the
+    // coplanar mask, reflection centers beyond the detector limit are not shown.
     const viewMax = Math.hypot(Math.max(Math.abs(grid.xmin), Math.abs(grid.xmax)), Math.max(Math.abs(grid.ymin), Math.abs(grid.ymax)), slice);
-    if (viewMax > qmax + 1e-12) warnings.push(`View reaches |q| = ${viewMax.toFixed(3)} Å⁻¹ but enumeration stops at ${qmax} Å⁻¹; reflection centers beyond it are omitted. Increase maximum |q| in Calculation or narrow the view.`);
+    const reach = useMask ? Math.min(viewMax, 2 * Math.sin(twoThetaMax * D2R / 2) / lambda) : viewMax;
+    if (reach > qmax + 1e-12) warnings.push(`View reaches |q| = ${reach.toFixed(3)} Å⁻¹ but enumeration stops at ${qmax} Å⁻¹; reflection centers beyond it are omitted. Increase maximum |q| in Calculation or narrow the view.`);
     const stats = { enumerated: 0, hidden: 0, nearZero: 0, planeExcluded: 0, outsideView: 0, inaccessible: 0, rendered: 0, underResolved: 0, work: 0 };
     for (const id of ["substrate", "film"]) {
       if (!state[id] || state[id].enabled === false) continue;

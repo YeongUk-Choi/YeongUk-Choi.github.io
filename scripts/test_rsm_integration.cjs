@@ -63,6 +63,20 @@ test("the shipped two-CIF example computes at the actual default 600×450 grid",
   }
 });
 
+test("default Cu demo warns only when the geometry mask is off", () => {
+  const before = JSON.stringify(state);
+  const warned = result => result.warnings.some(w => /enumeration stops at/.test(w));
+  assert.equal(warned(demo), false);
+  const unmasked = Rsm.simulate({ ...state, mask: false });
+  assert.equal(warned(unmasked), true);
+  const expanded = Rsm.simulate({ ...state, qmax: 2.0 });
+  const visible = result => result.reflections.filter(r => r.status === "rendered" && r.accessible)
+    .map(r => [r.layer, r.h, r.k, r.l]);
+  assert.deepEqual(visible(demo), visible(expanded));
+  assert.deepEqual(demo.total, expanded.total);
+  assert.equal(JSON.stringify(state), before);
+});
+
 test("shorter-wavelength demo reports q-range omissions until the user expands enumeration", () => {
   const limitedState = { ...state, lambda: 1.0 };
   const before = JSON.stringify(limitedState);
