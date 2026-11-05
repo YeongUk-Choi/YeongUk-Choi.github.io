@@ -35,6 +35,40 @@ Live at https://yeonguk-choi.github.io (GitHub repo `YeongUk-Choi/YeongUk-Choi.g
 
 Google Scholar blocks automated access and has no API, so it is only the profile link. The DOI list in `scripts/fetch_publications.py` is the source of truth (11 peer-reviewed papers, verified 2026-09-22). Add a paper with `python3 scripts/fetch_publications.py --add <DOI>`. Figures: only CC BY articles are shown with a figure by default; closed-access papers show abstract + DOI until an author-owned image is supplied.
 
+## RSM Studio
+
+`rsm.html` computes substrate and film reciprocal-space sections from two local CIFs.
+It uses the existing Phase Viewer geometry helpers and shared lab-code endpoint;
+the strict RSM CIF reader is isolated, so the existing Phase Viewer parser is unchanged.
+The model, conventions and limitations are documented in [docs/RSM_MODEL.md](docs/RSM_MODEL.md).
+
+The 2D map uses Gaussian peaks. The separate thickness panel shows an ideal continuous-slab
+`sinc²` profile; it is not a 2D fringe simulation. Numerical checks use analytical or synthetic
+references, not measured RSM intensities. Uploaded CIFs, sessions and calculations stay local.
+The only application network write is the shared-code check using `action=xrdcheck`.
+As with the other lab tools, the code gate does not make the static application files private.
+
+### Local preview and verification
+
+```sh
+python3 scripts/serve_rsm_preview.py --port 8767
+# Open http://127.0.0.1:8767/rsm.html; local test code: rsm-local-test
+node scripts/test_rsm_cif.cjs
+node scripts/test_rsm_core.cjs
+node scripts/test_rsm_integration.cjs
+node scripts/test_rsm_page.mjs
+```
+
+The preview server substitutes a loopback code-check endpoint. It never validates a code
+against the production service. Browser tests use an isolated Chrome profile and block external
+hosts. `data/rsm.js` controls whether the shared-code form is shown; production keeps it enabled.
+Only an acceptance flag is saved in session storage. **End session** clears it and reloads the app.
+Use **설정 저장** before leaving to preserve both CIF texts, chosen blocks and controls.
+
+IT92 coefficients are shipped as a generated, attributed table. Reproduction requires
+`gemmi==0.7.5` and `python3 scripts/generate_rsm_factors.py --check`; the browser does not need Python.
+The software listing lives in `data/software.js`.
+
 ## XRD Studio shared lab code
 
 `xrd-studio.html` asks for the shared lab code in Korean or English (`?lang=ko` or

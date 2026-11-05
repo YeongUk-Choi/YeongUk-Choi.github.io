@@ -145,6 +145,8 @@ try {
     ["/assets/img/software/xrd-studio.jpg", "image/jpeg"], ["/assets/img/software/rietveld-auto.jpg", "image/jpeg"],
     ["/assets/img/software/phase-viewer.jpg", "image/jpeg"],
     ["/assets/img/software/rietveld-auto-icon.svg", "image/svg+xml"],
+    ["/assets/img/software/rsm-studio-icon.svg", "image/svg+xml"],
+    ["/assets/img/software/rsm-studio.png", "image/png"],
     ["/assets/img/software/phase-viewer-icon.svg", "image/svg+xml"], ["/assets/img/qr-site.svg", "image/svg+xml"],
   ]);
   let origin;

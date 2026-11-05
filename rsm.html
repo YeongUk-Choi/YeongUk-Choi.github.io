@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RSM Studio — YeongUk Choi</title>
+<meta name="description" content="기판과 박막 CIF로 면외·면내 역격자 지도를 계산하고 격자, 배향, 파장을 조절합니다.">
+<meta name="robots" content="noindex, nofollow"><meta name="theme-color" content="#050507">
+<link rel="canonical" href="https://yeonguk-choi.github.io/rsm.html">
+<link rel="stylesheet" href="assets/css/site.css"><link rel="stylesheet" href="assets/css/rsm.css">
+<script src="data/profile.js"></script><script src="data/phases.js"></script><script src="data/rsm.js"></script>
+<script src="assets/js/site.js"></script><script src="assets/js/phase-core.js"></script>
+<script src="assets/js/rsm-cif.js"></script><script src="assets/js/rsm-factors.js"></script>
+<script src="assets/js/rsm-core.js"></script><script src="data/rsm-examples.js"></script>
+<script defer src="assets/js/rsm.js"></script><script defer src="assets/js/rsm-gate.js"></script>
+</head>
+<body data-page="software">
+<div class="bg-glow"></div><div class="bg-noise"></div>
+<nav class="nav"><div class="wrap"><a class="brand" href="index.html"><span class="dot"></span>YeongUk Choi</a><div class="nav-links"><a href="software.html">← Software</a><a href="phases.html">Crystal Phase Viewer</a><a href="xrd-studio.html">XRD Studio</a></div></div></nav>
+<main class="rsm-wrap">
+<header class="rsm-heading"><div><div class="eyebrow">Thin-film reciprocal space simulator</div><h1 class="page">RSM Studio<span class="rsm-version">v0.1</span></h1><p class="lede">두 결정의 격자를 바꾸며, 반사점이 움직이는 모습을 봅니다.</p></div><span class="rsm-badge">CIF 파일은 기기 안에서만 처리됩니다</span></header>
+<section id="rsm-gate" class="rsm-panel" hidden><h2>연구실 공용 도구</h2><p>XRD Studio와 같은 공용 코드를 입력하세요.</p><form id="gate-form"><label for="gate-code">공용 코드</label><div class="rsm-actions"><input id="gate-code" type="password" autocomplete="off" required><button class="rsm-primary" id="gate-submit">열기</button></div></form><p id="gate-status" role="status"></p><p class="rsm-note">코드는 이 탭에서만 확인합니다. 앱 파일 자체는 공개되어 있습니다.</p></section>
+<div id="rsm-app" hidden>
+<div class="rsm-topbar"><div class="rsm-actions"><button id="demo">예제 불러오기</button><button id="save-session">설정 저장</button><label class="rsm-file-btn">설정 열기<input type="file" id="load-session" accept=".json,application/json"></label></div><div class="rsm-actions"><span id="data-origin" class="rsm-note"></span><button id="end-session">세션 종료</button></div></div>
+<div class="rsm-layout">
+<aside class="rsm-controls" aria-label="시료와 계산 설정">
+<section class="rsm-panel" id="substrate-panel"><h2><i class="layer-dot substrate"></i>기판 <small>Substrate</small></h2><div id="substrate-inputs"></div></section>
+<section class="rsm-panel" id="film-panel"><h2><i class="layer-dot film"></i>박막 <small>Film</small></h2><div id="film-inputs"></div></section>
+<details class="rsm-panel" open><summary>면내 변형 · Strain</summary><p class="rsm-note">입방 기준 셀, (001)/[100] cube-on-cube 전용 등방 탄성 근사.</p><div class="rsm-grid2"><label>완화도 R<input id="relaxation" type="number" min="0" max="1" step="0.01" value="1"></label><label>푸아송비 ν<input id="poisson" type="number" min="0" max="0.49" step="0.01" value="0.3"></label></div><input aria-label="완화도 슬라이더" id="relax-slider" type="range" min="0" max="1" step="0.01" value="1"><button id="apply-strain">변형 적용</button><p id="strain-status" class="rsm-note">직접 격자 모드 · R을 적용하지 않았습니다.</p></details>
+<details class="rsm-panel" open><summary>장비 · Instrument</summary><div class="rsm-grid2"><label>파장 λ (Å)<input id="lambda" type="number" min="0.1" max="3" step="0.000001" value="1.540593"></label><label>에너지 (keV)<input id="energy-input" type="number" min="4.132807" max="123.984199" step="0.001" value="8.047824"></label><label>최대 2θ (°)<input id="two-theta" type="number" min="1" max="179.9" step="1" value="160"></label></div><p id="energy" class="rsm-note"></p><div class="rsm-grid2"><label>면내 σq (Å⁻¹)<input id="sigma-x" type="number" min="0.000001" max="0.1" step="0.0001" value="0.001"></label><label>면외 σq (Å⁻¹)<input id="sigma-z" type="number" min="0.000001" max="0.1" step="0.0001" value="0.001"></label></div><label class="rsm-check"><input id="mask" type="checkbox" checked>면외 반사 기하 접근 영역 표시</label></details>
+<details class="rsm-panel"><summary>계산 범위 · Calculation</summary><div class="rsm-grid2"><label>최대 |h,k,l|<input id="max-index" type="number" min="1" max="12" step="1" value="6"></label><label>최대 |q| (Å⁻¹)<input id="qmax" type="number" min="0.05" max="3.99" step="0.05" value="1.3"></label><label>표시 임계값 (%)<input id="threshold" type="number" min="0" max="100" step="0.1" value="0.4"></label><label>지도 해상도<select id="resolution"><option value="360">360 × 270</option><option value="600" selected>600 × 450</option></select></label></div><p class="rsm-note">임계값은 약한 반사를 숨기는 표시 기준입니다. 결정학적 소광과 구분합니다. 지수 범위 밖의 반사는 계산하지 않습니다.</p></details>
+</aside>
+<section class="rsm-output">
+<div class="rsm-panel rsm-map-panel"><div class="rsm-map-head"><div><h2>Reciprocal space map</h2><p class="rsm-note">q = 1/d · 2π 없는 규약 · Gaussian 봉우리 근사</p></div><div class="rsm-actions"><select id="plane" aria-label="지도 단면"><option value="xz">면외 · qx–qz</option><option value="xy">면내 · qx–qy</option></select><select id="units" aria-label="축 단위"><option value="A">Å⁻¹</option><option value="nm">nm⁻¹</option><option value="rlu">기판 rlu · 축 정렬 셀</option></select></div></div>
+<div class="rsm-plot-controls"><label>층<select id="display-layer"><option value="total">기판 + 박막</option><option value="film">박막만</option><option value="substrate">기판만</option></select></label><label>색상<select id="palette"><option value="heat">밝기 · inferno</option><option value="jet">관례 · jet</option></select></label><label>로그 범위<input id="decades" type="number" min="1" max="10" step="1" value="5"></label><label class="rsm-check"><input id="labels" type="checkbox" checked>hkl</label><button id="reset-view">전체 보기</button></div>
+<div class="rsm-bounds"><label>q 가로 min<input id="xmin" type="number" step="0.01" value="-1.05"></label><label>q 가로 max<input id="xmax" type="number" step="0.01" value="1.05"></label><label>q 세로 min<input id="ymin" type="number" step="0.01" value="0"></label><label>q 세로 max<input id="ymax" type="number" step="0.01" value="1.25"></label><label id="slice-label">고정 qy (Å⁻¹)<input id="slice" type="number" step="0.001" value="0"></label></div>
+<p id="plane-note" class="rsm-note">기판 표면 법선 = z. 선택한 면내 방향의 투영 = x.</p>
+<div class="rsm-figure" id="figure"><canvas id="map" width="900" height="700" aria-label="박막과 기판의 역격자 강도 지도"></canvas><div id="map-empty">두 CIF를 불러오거나 예제를 선택하세요.</div></div>
+<p id="cursor" class="rsm-readout">지도의 반사점을 클릭하면 확대할 수 있습니다.</p><div class="rsm-legend"><span><i class="layer-dot substrate"></i>기판</span><span><i class="layer-dot film"></i>박막</span><span id="geometry-legend">면외 반사 기하 · 회색 = 접근 불가</span></div>
+<p id="status" class="rsm-status" role="status" aria-live="polite"></p><div id="warnings" class="rsm-warnings"></div>
+<div class="rsm-actions rsm-export"><button id="export-png" disabled>PNG</button><button id="export-svg" disabled>SVG</button><button id="export-grid" disabled>세기 격자 TXT</button><button id="export-csv" disabled>반사표 CSV</button></div>
+</div>
+<div class="rsm-detail-grid"><section class="rsm-panel"><h2>선택 반사</h2><p id="selection" class="rsm-note">지도 또는 아래 반사표에서 선택하세요.</p><label>확대 폭 (Å⁻¹)<input type="number" id="zoom-width" min="0.001" max="0.5" step="0.005" value="0.06"></label><button id="zoom" disabled>이 반사 확대</button><button id="pin" disabled>비교에 고정</button><div id="pins"></div></section><section class="rsm-panel"><h2>박막 두께 프로파일</h2><p class="rsm-note">균일 연속 박막의 이상적인 sinc² 단면. 장비 확장 전의 해석적 함수이며 위 Gaussian 지도와 구분합니다.</p><canvas id="profile" width="500" height="220" aria-label="박막 두께에 따른 해석적 간섭 프로파일"></canvas><p id="profile-info" class="rsm-note"></p></section></div>
+<details class="rsm-panel" open><summary>반사표 <span id="reflection-count"></span></summary><div class="rsm-table-wrap"><table><thead><tr><th>층</th><th>h k l</th><th>qx</th><th>qy</th><th>qz</th><th>d (Å)</th><th>|F|²</th><th>2θ (°)</th><th>변이체</th></tr></thead><tbody id="reflections"></tbody></table></div><p class="rsm-note">좌표는 항상 Å⁻¹. 표에는 계산된 3D 반사도 포함되어, 현재 단면 밖의 반사를 확인할 수 있습니다.</p></details>
+<details class="rsm-panel"><summary>계산 모델과 해석 범위</summary><p>두 CIF를 대칭 전개한 뒤 IT92 중성 원자산란인자와 등방 온도인자로 구조인자를 계산합니다. 기판·박막·변이체의 세기는 비간섭 합으로 더합니다. 층간 세기 배율은 사용자가 정하는 상대값입니다.</p><p>지도는 Gaussian 봉우리 근사입니다. 박막 두께와 면내 결맞음 길이, 반지름 방향 변형폭, 원호 방향 모자이크, 장비 폭을 합성합니다. 연속 박막의 sinc² 프린지는 별도의 두께 프로파일로 확인합니다. 넓은 지도에서 픽셀보다 좁은 봉우리는 픽셀 평균 근사로 표시하며, 정량 폭은 확대하여 확인하세요.</p><p>두께는 봉우리 폭을 바꾸며 3차원 적분 세기 가중치는 유지합니다. 조사 부피 증가나 두께에 따른 절대 세기 변화는 예측하지 않습니다. 틸트는 격자와 두께·결맞음 축을 함께 회전시킵니다. 평평한 박막 안에서 결정만 기울어진 모형과는 다릅니다.</p><p>CIF는 시료 배향을 지정하지 않습니다. 각 층의 표면 (hkl)과 면내 [uvw]를 직접 설정하세요. 격자값만 수정할 때 원자의 분율 좌표와 대칭 전개 위치는 유지되므로, 원자 재배열이나 다른 상으로의 전이는 자동 계산되지 않습니다.</p><p>편광·스캔 기하 세기 보정, 동역학 회절, 흡수, 굴절, 이상산란, Kα₂, 실측 피팅은 포함하지 않습니다. 기판 폭은 Darwin 폭이 아닙니다. 면내 지도는 고정 qz의 역격자 단면이며 GI 측정 접근성은 계산하지 않습니다. 검증 범위는 해석적·합성 기준입니다.</p><p class="rsm-note"><a href="https://gemmi.readthedocs.io/en/latest/scattering.html" target="_blank" rel="noopener">Gemmi / IT92 산란인자</a> · <a href="https://xrayutilities.sourceforge.io/simulations.html" target="_blank" rel="noopener">회절 모델 참고</a></p></details>
+</section></div></div>
+</main><footer><div class="wrap">© <span data-year></span> YeongUk Choi · RSM Studio · Local file processing</div></footer>
+</body></html>

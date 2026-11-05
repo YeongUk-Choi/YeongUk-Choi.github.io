@@ -27,6 +27,34 @@ window.SITE.software = {
   lede: "Programs I wrote for my own measurements. Each one is shown with its own screen and what it actually does.",
   items: [
     {
+      name: "RSM Studio",
+      tagline: "Upload a substrate CIF and a film CIF, then see how lattice changes move their reciprocal-space reflections.",
+      kind: "web",
+      sub: "Runs in your browser · thin-film reciprocal space maps",
+      icon: "assets/img/software/rsm-studio-icon.svg",
+      launch: "rsm.html",
+      status: "released",
+      version: "0.1", date: "2026-11-06", license: "",
+      image: "assets/img/software/rsm-studio.png",
+      imageAlt: "RSM Studio synthetic substrate and film map, showing split reciprocal lattice peaks and the coplanar accessible region",
+      imageNote: "Synthetic STO-like example, with the film c axis edited. Gaussian map; grey regions are inaccessible in the selected reflection geometry.",
+      features: [
+        "Separate substrate and film CIF inputs, with explicit symmetry and data-block checks",
+        "Out-of-plane qx–qz and in-plane qx–qy sections, reflection selection and zoom",
+        "Editable lattice lengths, angles, surface orientation, tilt and domain variants",
+        "Adjustable wavelength or photon energy; the lattice fixes reflection positions",
+        "Neutral-atom IT92 structure factors, isotropic displacement factors and Gaussian broadening",
+        "Cube-on-cube cubic relaxation model and a separate analytical thickness-fringe profile",
+        "PNG, SVG image, reciprocal-space grid, reflection CSV and portable settings exports",
+        "CIF files and calculations stay on your device"
+      ],
+      needs: "A current browser and the shared lab code · Korean interface",
+      caveat: "Analytically tested simulation, not a fit to measured intensity. The 2D map uses Gaussian peaks; " +
+              "thickness fringes appear only in the separate 1D profile. Layer intensities are independently scaled. " +
+              "The access mask models coplanar reflection geometry only; in-plane sections have no GI access mask.",
+      links: [{label: "Open in browser", href: "rsm.html", primary: true, page: true}]
+    },
+    {
       name: "XRD Studio",
       tagline: "Simulate and fit a symmetric \u03b8\u20132\u03b8 scan of a perovskite film on its substrate \u2014 in a browser, with nothing to install.",
       kind: "web",
