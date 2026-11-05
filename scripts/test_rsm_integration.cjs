@@ -63,6 +63,24 @@ test("the shipped two-CIF example computes at the actual default 600×450 grid",
   }
 });
 
+test("shorter-wavelength demo reports q-range omissions until the user expands enumeration", () => {
+  const limitedState = { ...state, lambda: 1.0 };
+  const before = JSON.stringify(limitedState);
+  const limited = Rsm.simulate(limitedState);
+  const expanded = Rsm.simulate({ ...limitedState, qmax: 2.0 });
+  const visible = result => result.reflections.filter(r => r.status === "rendered" && r.accessible);
+  const key = r => [r.layer, r.h, r.k, r.l].join(":");
+  const included = new Set(visible(limited).map(key));
+  const omitted = visible(expanded).filter(r => !included.has(key(r)));
+  assert.equal(visible(limited).length, 27);
+  assert.equal(visible(expanded).length, 35);
+  for (const reflection of ["substrate:-4:0:4", "substrate:4:0:4", "film:-3:0:5", "film:3:0:5"])
+    assert.ok(omitted.some(r => key(r) === reflection), reflection);
+  assert.ok(limited.warnings.some(w => /View reaches.*1\.632.*enumeration stops at 1\.3/.test(w)));
+  assert.ok(!expanded.warnings.some(w => /enumeration stops at/.test(w)));
+  assert.equal(JSON.stringify(limitedState), before, "warning must not silently change qmax or other inputs");
+});
+
 test("parsed biso actually attenuates the demo structure factor across the module boundary", () => {
   const parsed = state.substrate.parsed, q = 2 / parsed.cell.c;
   assert.ok(parsed.expandedAtoms.every(atom => atom.biso === 0.4));

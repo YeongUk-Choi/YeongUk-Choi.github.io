@@ -154,6 +154,16 @@ try {
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
     await writeFile(path.join(output, "RSM_MAP.png"), png);
   });
+  await check("shorter wavelength shows enumeration warning and manual qmax expansion clears it", async () => {
+    await input("lambda", 1); await ready();
+    assert.equal(await run("Number(document.getElementById('qmax').value)"), 1.3);
+    assert.match(await run("document.getElementById('warnings').textContent"), /enumeration stops at 1\.3/);
+    await screenshot("RSM_QMAX_WARNING.png", true);
+    await input("qmax", 2); await ready();
+    assert.doesNotMatch(await run("document.getElementById('warnings').textContent"), /enumeration stops at/);
+    await input("qmax", 1.3); await input("lambda", 1.540593);
+    await demo();
+  });
   await check("invalid energy cancels pending debounce and clears export/profile state", async () => {
     await run("(() => { const l=document.getElementById('lambda');l.value='1.5';l.dispatchEvent(new Event('input',{bubbles:true}));const e=document.getElementById('energy-input');e.value='';e.dispatchEvent(new Event('input',{bubbles:true})); })()");
     await delay(600);

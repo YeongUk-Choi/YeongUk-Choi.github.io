@@ -157,6 +157,20 @@ test("map grids contain finite nonnegative intensities; layers add incoherently"
   assert.deepEqual(a.total, b.total); assert.ok(a.reflections.every(r => r.accessible === null));
   assert.equal(JSON.stringify(state), before);
 });
+test("q-range coverage warns for both planes and offset slices without warning at the boundary", () => {
+  const state = { film: layer(), maxIndex: 6, mask: false, qmax: 1.25,
+    grid: { width: 64, height: 64, xmin: -0.75, xmax: 0.2, ymin: -1, ymax: 0.3 } };
+  const warned = result => result.warnings.some(w => /enumeration stops at/.test(w));
+  for (const plane of ["xz", "xy"]) {
+    assert.equal(warned(R.simulate({ ...state, plane })), false); // Farthest corner is (-0.75, -1).
+    assert.equal(warned(R.simulate({ ...state, plane, qmax: 1.25 - 5e-13 })), false);
+    assert.equal(warned(R.simulate({ ...state, plane, qmax: 1.25 - 1e-9 })), true);
+    for (const slice of [-0.1, 0.1]) assert.equal(warned(R.simulate({ ...state, plane, slice })), true);
+    const grid = { ...state.grid, xmin: -0.9, ymin: -1.1 };
+    assert.equal(warned(R.simulate({ ...state, plane, grid, qmax: undefined })), true); // Default 1.4.
+    assert.equal(warned(R.simulate({ ...state, plane, grid, qmax: 1.5 })), false);
+  }
+});
 test("variant weights conserve an identical-domain map and zero scale produces zero intensity", () => {
   const state = { film: layer(), maxIndex: 3, qmax: 1, mask: false,
     grid: { width: 100, height: 100, xmin: 0.1, xmax: 0.5, ymin: 0.3, ymax: 0.8 } };
